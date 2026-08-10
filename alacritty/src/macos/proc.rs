@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
 use std::io;
-use std::mem::{self, MaybeUninit};
+use std::mem::{MaybeUninit, size_of};
 use std::os::raw::{c_int, c_void};
 use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
@@ -45,8 +45,8 @@ impl From<io::Error> for Error {
 
 pub fn cwd(pid: c_int) -> Result<PathBuf, Error> {
     let mut info = MaybeUninit::<sys::proc_vnodepathinfo>::uninit();
-    let info_ptr = info.as_mut_ptr() as *mut c_void;
-    let size = mem::size_of::<sys::proc_vnodepathinfo>() as c_int;
+    let info_ptr = info.as_mut_ptr().cast::<c_void>();
+    let size = size_of::<sys::proc_vnodepathinfo>() as c_int;
 
     let info = unsafe {
         let pidinfo_size = sys::proc_pidinfo(pid, sys::PROC_PIDVNODEPATHINFO, 0, info_ptr, size);

@@ -50,7 +50,7 @@ use crate::display::SizeInfo;
 #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
 const WINDOW_ICON: &[u8] = include_bytes!("../../extra/logo/compat/alacritty-term.png");
 
-/// This should match the definition of IDI_ICON from `alacritty.rc`.
+/// This should match the definition of `IDI_ICON` from `alacritty.rc`.
 #[cfg(windows)]
 const IDI_ICON: u16 = 0x101;
 
@@ -447,7 +447,7 @@ impl Window {
 
     #[cfg(target_os = "macos")]
     pub fn set_simple_fullscreen(&self, simple_fullscreen: bool) {
-        self.window.set_simple_fullscreen(simple_fullscreen);
+        let _ = self.window.set_simple_fullscreen(simple_fullscreen);
     }
 
     /// Set IME inhibitor state and disable IME while any are present when the backend permits it.

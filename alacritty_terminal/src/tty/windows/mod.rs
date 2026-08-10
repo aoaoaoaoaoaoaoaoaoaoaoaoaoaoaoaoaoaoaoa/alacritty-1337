@@ -1,5 +1,5 @@
 use std::ffi::OsStr;
-use std::io::{self, Result};
+use std::io::Result;
 use std::iter::once;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ mod conpty;
 use blocking::{UnblockedReader, UnblockedWriter};
 use conpty::Conpty as Backend;
 use miow::pipe::{AnonRead, AnonWrite};
-use polling::{Event, Poller};
+use polling::{Event, PollMode, Poller};
 
 pub const PTY_CHILD_EVENT_TOKEN: usize = 1;
 pub const PTY_READ_WRITE_TOKEN: usize = 2;
@@ -65,9 +65,9 @@ impl EventedReadWrite for Pty {
     unsafe fn register(
         &mut self,
         poll: &Arc<Poller>,
-        interest: polling::Event,
-        poll_opts: polling::PollMode,
-    ) -> io::Result<()> {
+        interest: Event,
+        poll_opts: PollMode,
+    ) -> Result<()> {
         self.conin.register(poll, with_key(interest, PTY_READ_WRITE_TOKEN), poll_opts);
         self.conout.register(poll, with_key(interest, PTY_READ_WRITE_TOKEN), poll_opts);
         self.child_watcher.register(poll, with_key(interest, PTY_CHILD_EVENT_TOKEN));
@@ -79,9 +79,9 @@ impl EventedReadWrite for Pty {
     fn reregister(
         &mut self,
         poll: &Arc<Poller>,
-        interest: polling::Event,
-        poll_opts: polling::PollMode,
-    ) -> io::Result<()> {
+        interest: Event,
+        poll_opts: PollMode,
+    ) -> Result<()> {
         self.conin.register(poll, with_key(interest, PTY_READ_WRITE_TOKEN), poll_opts);
         self.conout.register(poll, with_key(interest, PTY_READ_WRITE_TOKEN), poll_opts);
         self.child_watcher.register(poll, with_key(interest, PTY_CHILD_EVENT_TOKEN));
@@ -90,7 +90,7 @@ impl EventedReadWrite for Pty {
     }
 
     #[inline]
-    fn deregister(&mut self, _poll: &Arc<Poller>) -> io::Result<()> {
+    fn deregister(&mut self, _poll: &Arc<Poller>) -> Result<()> {
         self.conin.deregister();
         self.conout.deregister();
         self.child_watcher.deregister();
@@ -121,7 +121,7 @@ impl EventedPty for Pty {
 
 impl OnResize for Pty {
     fn on_resize(&mut self, window_size: WindowSize) {
-        self.backend.on_resize(window_size)
+        self.backend.on_resize(window_size);
     }
 }
 
@@ -167,7 +167,7 @@ fn cmdline(config: &Options) -> String {
         if config.escape_args {
             push_escaped_arg(&mut cmd, arg);
         } else {
-            cmd.push_str(arg)
+            cmd.push_str(arg);
         }
     }
     cmd

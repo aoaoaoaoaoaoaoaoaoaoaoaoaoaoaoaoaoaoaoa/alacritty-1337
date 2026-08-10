@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,6 +82,13 @@ def load_commands(metadata: dict[str, object]) -> dict[str, Command | CommandSeq
         commands["feature_commands"] = load_command_sequence(
             raw_feature_commands,
             key_path="workspace.metadata.rust-starter.feature_commands",
+        )
+
+    raw_linux_feature_commands = metadata.get("linux_feature_commands")
+    if raw_linux_feature_commands is not None:
+        commands["linux_feature_commands"] = load_command_sequence(
+            raw_linux_feature_commands,
+            key_path="workspace.metadata.rust-starter.linux_feature_commands",
         )
     return commands
 
@@ -222,6 +230,8 @@ def main() -> None:
     run("test", commands["test_command"])
     if "feature_commands" in commands:
         run_command_sequence("features", commands["feature_commands"])
+    if sys.platform.startswith("linux") and "linux_feature_commands" in commands:
+        run_command_sequence("linux-features", commands["linux_feature_commands"])
 
     if args.mode == "deep" and "doc_command" in commands:
         run("doc", commands["doc_command"])

@@ -2,7 +2,7 @@
 
 use std::io::prelude::*;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll, Wake, Waker};
 use std::{io, thread};
 
@@ -60,7 +60,7 @@ impl<R: Read + Send + 'static> UnblockedReader<R> {
         });
 
         // Spawn the reader thread.
-        spawn_named("alacritty-tty-reader-thread", move || {
+        let _ = spawn_named("alacritty-tty-reader-thread", move || {
             let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
             let mut context = Context::from_waker(&waker);
 
@@ -73,15 +73,11 @@ impl<R: Read + Send + 'static> UnblockedReader<R> {
                         return;
                     },
 
-                    Poll::Ready(Ok(_)) => {
-                        // Keep reading.
-                        continue;
-                    },
+                    // Keep reading.
+                    Poll::Ready(Ok(_)) => (),
 
-                    Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::Interrupted => {
-                        // We were interrupted; continue.
-                        continue;
-                    },
+                    // We were interrupted; continue.
+                    Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::Interrupted => (),
 
                     Poll::Ready(Err(e)) => {
                         log::error!("error writing to pipe: {}", e);
@@ -102,19 +98,19 @@ impl<R: Read + Send + 'static> UnblockedReader<R> {
 
     /// Register interest in the reader.
     pub fn register(&mut self, poller: &Arc<Poller>, event: Event, mode: PollMode) {
-        let mut interest = self.interest.interest.lock().unwrap();
+        let mut interest = self.interest.interest.lock().unwrap_or_else(PoisonError::into_inner);
         *interest = Some(Interest { event, poller: poller.clone(), mode });
 
         // Send the event to start off with if we have any data.
         if (!self.pipe.is_empty() && event.readable) || self.first_register {
             self.first_register = false;
-            poller.post(CompletionPacket::new(event)).ok();
+            let _ = poller.post(CompletionPacket::new(event));
         }
     }
 
     /// Deregister interest in the reader.
     pub fn deregister(&self) {
-        let mut interest = self.interest.interest.lock().unwrap();
+        let mut interest = self.interest.interest.lock().unwrap_or_else(PoisonError::into_inner);
         *interest = None;
     }
 
@@ -158,7 +154,7 @@ impl<W: Write + Send + 'static> UnblockedWriter<W> {
         });
 
         // Spawn the writer thread.
-        spawn_named("alacritty-tty-writer-thread", move || {
+        let _ = spawn_named("alacritty-tty-writer-thread", move || {
             let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
             let mut context = Context::from_waker(&waker);
 
@@ -171,15 +167,11 @@ impl<W: Write + Send + 'static> UnblockedWriter<W> {
                         return;
                     },
 
-                    Poll::Ready(Ok(_)) => {
-                        // Keep writing.
-                        continue;
-                    },
+                    // Keep writing.
+                    Poll::Ready(Ok(_)) => (),
 
-                    Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::Interrupted => {
-                        // We were interrupted; continue.
-                        continue;
-                    },
+                    // We were interrupted; continue.
+                    Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::Interrupted => (),
 
                     Poll::Ready(Err(e)) => {
                         log::error!("error writing to pipe: {}", e);
@@ -200,18 +192,18 @@ impl<W: Write + Send + 'static> UnblockedWriter<W> {
 
     /// Register interest in the writer.
     pub fn register(&self, poller: &Arc<Poller>, event: Event, mode: PollMode) {
-        let mut interest = self.interest.interest.lock().unwrap();
+        let mut interest = self.interest.interest.lock().unwrap_or_else(PoisonError::into_inner);
         *interest = Some(Interest { event, poller: poller.clone(), mode });
 
         // Send the event to start off with if we have room for data.
         if !self.pipe.is_full() && event.writable {
-            poller.post(CompletionPacket::new(event)).ok();
+            let _ = poller.post(CompletionPacket::new(event));
         }
     }
 
     /// Deregister interest in the writer.
     pub fn deregister(&self) {
-        let mut interest = self.interest.interest.lock().unwrap();
+        let mut interest = self.interest.interest.lock().unwrap_or_else(PoisonError::into_inner);
         *interest = None;
     }
 
@@ -255,7 +247,7 @@ impl Wake for Registration {
     }
 
     fn wake_by_ref(self: &Arc<Self>) {
-        let mut interest_lock = self.interest.lock().unwrap();
+        let mut interest_lock = self.interest.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(interest) = interest_lock.as_ref() {
             // Send the event to the poller.
             let send_event = match self.end {
@@ -264,7 +256,7 @@ impl Wake for Registration {
             };
 
             if send_event {
-                interest.poller.post(CompletionPacket::new(interest.event)).ok();
+                let _ = interest.poller.post(CompletionPacket::new(interest.event));
 
                 // Clear the event if we're in oneshot mode.
                 if matches!(interest.mode, PollMode::Oneshot | PollMode::EdgeOneshot) {

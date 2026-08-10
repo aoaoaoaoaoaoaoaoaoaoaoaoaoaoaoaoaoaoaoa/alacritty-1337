@@ -175,7 +175,7 @@ fn default_shell_command(shell: &str, user: &str, home: &str) -> Command {
     //
     // XXX: we use zsh here over sh due to `exec -a`.
     let flags = if has_home_hushlogin { "-qflp" } else { "-flp" };
-    login_command.args([flags, user, "/bin/zsh", "-fc", &exec]);
+    let _ = login_command.args([flags, user, "/bin/zsh", "-fc", &exec]);
     login_command
 }
 

@@ -4,6 +4,7 @@
 )]
 
 use std::ffi::{CStr, CString};
+use std::ptr;
 use std::str;
 
 use libc::{LC_ALL, LC_CTYPE, setlocale};
@@ -14,8 +15,7 @@ use objc2_foundation::{NSLocale, NSObjectProtocol};
 const FALLBACK_LOCALE: &str = "UTF-8";
 
 pub fn set_locale_environment() -> Option<(String, String)> {
-    let env_locale_c = CString::new("").unwrap();
-    let env_locale_ptr = unsafe { setlocale(LC_ALL, env_locale_c.as_ptr()) };
+    let env_locale_ptr = unsafe { setlocale(LC_ALL, c"".as_ptr()) };
     if !env_locale_ptr.is_null() {
         let env_locale = unsafe { CStr::from_ptr(env_locale_ptr).to_string_lossy() };
 
@@ -29,16 +29,17 @@ pub fn set_locale_environment() -> Option<(String, String)> {
     let system_locale = system_locale();
 
     // Set locale to system locale.
-    let system_locale_c = CString::new(system_locale.clone()).expect("nul byte in system locale");
-    let lc_all = unsafe { setlocale(LC_ALL, system_locale_c.as_ptr()) };
+    let lc_all = match CString::new(system_locale.as_bytes()) {
+        Ok(system_locale_c) => unsafe { setlocale(LC_ALL, system_locale_c.as_ptr()) },
+        Err(_) => ptr::null_mut(),
+    };
 
     // Check if system locale was valid or not.
     if lc_all.is_null() {
         // Use fallback locale.
         debug!("Using fallback locale: {}", FALLBACK_LOCALE);
 
-        let fallback_locale_c = CString::new(FALLBACK_LOCALE).unwrap();
-        unsafe { setlocale(LC_CTYPE, fallback_locale_c.as_ptr()) };
+        let _ = unsafe { setlocale(LC_CTYPE, c"UTF-8".as_ptr()) };
 
         Some(("LC_CTYPE".into(), FALLBACK_LOCALE.into()))
     } else {

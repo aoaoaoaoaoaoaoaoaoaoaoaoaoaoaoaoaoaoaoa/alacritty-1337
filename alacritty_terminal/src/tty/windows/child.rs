@@ -6,7 +6,7 @@ use std::os::windows::process::ExitStatusExt;
 use std::process::ExitStatus;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 
 use polling::os::iocp::{CompletionPacket, PollerIocpExt};
 use polling::{Event, Poller};
@@ -30,23 +30,23 @@ struct ChildExitSender {
     child_handle: AtomicPtr<c_void>,
 }
 
-/// WinAPI callback to run when child process exits.
+/// `WinAPI` callback to run when child process exits.
 extern "system" fn child_exit_callback(ctx: *mut c_void, timed_out: BOOLEAN) {
     if timed_out != 0 {
         return;
     }
 
-    let event_tx = unsafe { &*(ctx as *const ChildExitSender) };
+    let event_tx = unsafe { &*ctx.cast::<ChildExitSender>() };
 
     let mut exit_code = 0_u32;
-    let child_handle = event_tx.child_handle.load(Ordering::Relaxed) as HANDLE;
-    let status = unsafe { GetExitCodeProcess(child_handle, &mut exit_code) };
+    let child_handle = event_tx.child_handle.load(Ordering::Relaxed);
+    let status = unsafe { GetExitCodeProcess(child_handle, &raw mut exit_code) };
     let exit_status = if status == FALSE { None } else { Some(ExitStatus::from_raw(exit_code)) };
-    event_tx.sender.send(ChildEvent::Exited(exit_status)).ok();
+    let _ = event_tx.sender.send(ChildEvent::Exited(exit_status));
 
-    let interest = event_tx.interest.lock().unwrap();
+    let interest = event_tx.interest.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(interest) = interest.as_ref() {
-        interest.poller.post(CompletionPacket::new(interest.event)).ok();
+        let _ = interest.poller.post(CompletionPacket::new(interest.event));
     }
 }
 
@@ -73,10 +73,10 @@ impl ChildExitWatcher {
 
         let success = unsafe {
             RegisterWaitForSingleObject(
-                &mut wait_handle,
-                child_handle.as_raw_handle() as HANDLE,
+                &raw mut wait_handle,
+                child_handle.as_raw_handle(),
                 Some(child_exit_callback),
-                (&*callback as *const ChildExitSender).cast_mut().cast(),
+                ptr::from_ref(callback.as_ref()).cast_mut().cast(),
                 INFINITE,
                 WT_EXECUTEINWAITTHREAD | WT_EXECUTEONLYONCE,
             )
@@ -85,8 +85,7 @@ impl ChildExitWatcher {
         if success == 0 {
             Err(Error::last_os_error())
         } else {
-            let pid =
-                unsafe { NonZeroU32::new(GetProcessId(child_handle.as_raw_handle() as HANDLE)) };
+            let pid = unsafe { NonZeroU32::new(GetProcessId(child_handle.as_raw_handle())) };
             Ok(ChildExitWatcher {
                 event_rx,
                 interest,
@@ -103,11 +102,12 @@ impl ChildExitWatcher {
     }
 
     pub fn register(&self, poller: &Arc<Poller>, event: Event) {
-        *self.interest.lock().unwrap() = Some(Interest { poller: poller.clone(), event });
+        *self.interest.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(Interest { poller: poller.clone(), event });
     }
 
     pub fn deregister(&self) {
-        *self.interest.lock().unwrap() = None;
+        *self.interest.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     /// Retrieve the process handle of the underlying child process.
@@ -119,7 +119,7 @@ impl ChildExitWatcher {
     /// If you terminate the process using this handle, the terminal will get a
     /// timeout error, and the child watcher will emit an `Exited` event.
     pub fn raw_handle(&self) -> HANDLE {
-        self.child_handle.as_raw_handle() as HANDLE
+        self.child_handle.as_raw_handle()
     }
 
     /// Retrieve the Process ID associated to the underlying child process.
@@ -131,10 +131,8 @@ impl ChildExitWatcher {
 impl Drop for ChildExitWatcher {
     fn drop(&mut self) {
         unsafe {
-            let _ = UnregisterWaitEx(
-                self.wait_handle.load(Ordering::Relaxed) as HANDLE,
-                INVALID_HANDLE_VALUE,
-            );
+            let _ =
+                UnregisterWaitEx(self.wait_handle.load(Ordering::Relaxed), INVALID_HANDLE_VALUE);
         }
     }
 }

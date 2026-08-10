@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // silently if the parent has no console.
     #[cfg(windows)]
     unsafe {
-        AttachConsole(ATTACH_PARENT_PROCESS);
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
     }
 
     // Load command line options.
@@ -254,7 +254,7 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
     // Without explicitly detaching the console cmd won't redraw it's prompt.
     #[cfg(windows)]
     unsafe {
-        FreeConsole();
+        let _ = FreeConsole();
     }
 
     info!("Goodbye");

@@ -260,7 +260,7 @@ impl Default for Hints {
         #[cfg(windows)]
         let action = HintAction::Command(Program::WithArgs {
             program: String::from("cmd"),
-            args: vec!["/c".to_string(), "start".to_string(), "".to_string()],
+            args: vec!["/c".to_string(), "start".to_string(), String::new()],
         });
 
         Self {

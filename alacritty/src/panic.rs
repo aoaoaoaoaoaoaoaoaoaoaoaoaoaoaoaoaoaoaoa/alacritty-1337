@@ -14,7 +14,7 @@ pub fn attach_handler() {
         let _ = writeln!(io::stderr(), "{}", panic_info);
         let msg = format!("{}\n\nPress Ctrl-C to Copy", panic_info);
         unsafe {
-            MessageBoxW(
+            let _ = MessageBoxW(
                 ptr::null_mut(),
                 win32_string(&msg).as_ptr(),
                 win32_string("Alacritty: Runtime Error").as_ptr(),

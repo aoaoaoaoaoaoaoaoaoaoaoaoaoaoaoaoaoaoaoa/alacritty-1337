@@ -110,9 +110,11 @@ format_command = ["cargo", "fmt", "--all", "--", "--check"]
 clippy_command = ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked"]
 test_command = ["cargo", "test", "--workspace", "--all-targets", "--all-features", "--locked"]
 feature_commands = [
+    ["cargo", "test", "--locked", "-p", "alacritty_terminal", "--no-default-features"],
+]
+linux_feature_commands = [
     ["cargo", "test", "--locked", "-p", "alacritty", "--no-default-features", "--features", "x11"],
     ["cargo", "test", "--locked", "-p", "alacritty", "--no-default-features", "--features", "wayland"],
-    ["cargo", "test", "--locked", "-p", "alacritty_terminal", "--no-default-features"],
 ]
 doc_command = ["cargo", "doc", "--workspace", "--all-features", "--no-deps", "--locked"]
 canonicalize_commands = [

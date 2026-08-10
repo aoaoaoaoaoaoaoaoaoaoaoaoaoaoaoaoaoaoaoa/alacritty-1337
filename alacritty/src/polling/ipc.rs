@@ -150,16 +150,17 @@ fn send_reply_fallible(stream: &mut UnixStream, message: SocketReply) -> IoResul
 
 /// Directory for the IPC socket file.
 pub fn socket_dir() -> IoResult<PathBuf> {
+    let uid = unsafe { libc::geteuid() };
+
     #[cfg(not(target_os = "macos"))]
-    let xdg_runtime = xdg::BaseDirectories::with_prefix("alacritty")
+    let path = xdg::BaseDirectories::with_prefix("alacritty")
         .get_runtime_directory()
         .map(ToOwned::to_owned)
-        .ok();
+        .ok()
+        .unwrap_or_else(|| env::temp_dir().join(format!("alacritty-{uid}")));
     #[cfg(target_os = "macos")]
-    let xdg_runtime = None;
+    let path = env::temp_dir().join(format!("alacritty-{uid}"));
 
-    let uid = unsafe { libc::geteuid() };
-    let path = xdg_runtime.unwrap_or_else(|| env::temp_dir().join(format!("alacritty-{uid}")));
     fs::create_dir_all(&path)?;
 
     let metadata = path.metadata()?;
