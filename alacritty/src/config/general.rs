@@ -25,7 +25,7 @@ pub struct General {
     pub live_config_reload: bool,
 
     /// Offer IPC through a unix socket.
-    #[allow(unused)]
+    #[allow(unused, reason = "field is consumed only by platform-gated macOS code")]
     pub ipc_socket: bool,
 }
 

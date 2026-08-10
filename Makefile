@@ -1,7 +1,10 @@
 TARGET = alacritty
 
 ASSETS_DIR = extra
-RELEASE_DIR = target/release
+CARGO_PROFILE ?= release
+TARGET_DIR ?= $(shell cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')
+RELEASE_DIR = $(TARGET_DIR)/$(CARGO_PROFILE)
+VERSION = $(shell cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(next(package["version"] for package in json.load(sys.stdin)["packages"] if package["name"] == "alacritty"))')
 MANPAGE = $(ASSETS_DIR)/man/alacritty.1.scd
 MANPAGE-MSG = $(ASSETS_DIR)/man/alacritty-msg.1.scd
 MANPAGE-CONFIG = $(ASSETS_DIR)/man/alacritty.5.scd
@@ -36,11 +39,12 @@ help: ## Print this help message
 binary: $(TARGET)-native ## Build a release binary
 binary-universal: $(TARGET)-universal ## Build a universal release binary
 $(TARGET)-native:
-	MACOSX_DEPLOYMENT_TARGET="10.12" cargo build --release
+	MACOSX_DEPLOYMENT_TARGET="10.12" cargo build --locked --profile $(CARGO_PROFILE)
 $(TARGET)-universal:
-	MACOSX_DEPLOYMENT_TARGET="10.12" cargo build --release --target=x86_64-apple-darwin
-	MACOSX_DEPLOYMENT_TARGET="10.12" cargo build --release --target=aarch64-apple-darwin
-	@lipo target/{x86_64,aarch64}-apple-darwin/release/$(TARGET) -create -output $(APP_BINARY)
+	MACOSX_DEPLOYMENT_TARGET="10.12" cargo build --locked --profile $(CARGO_PROFILE) --target=x86_64-apple-darwin
+	MACOSX_DEPLOYMENT_TARGET="10.12" cargo build --locked --profile $(CARGO_PROFILE) --target=aarch64-apple-darwin
+	@mkdir -p $(RELEASE_DIR)
+	@lipo $(TARGET_DIR)/{x86_64,aarch64}-apple-darwin/$(CARGO_PROFILE)/$(TARGET) -create -output $(APP_BINARY)
 
 app: $(APP_NAME)-native ## Create an Alacritty.app
 app-universal: $(APP_NAME)-universal ## Create a universal Alacritty.app
@@ -48,13 +52,14 @@ $(APP_NAME)-%: $(TARGET)-%
 	@mkdir -p $(APP_BINARY_DIR)
 	@mkdir -p $(APP_EXTRAS_DIR)
 	@mkdir -p $(APP_COMPLETIONS_DIR)
-	@scdoc < $(MANPAGE) | gzip -c > $(APP_EXTRAS_DIR)/alacritty.1.gz
-	@scdoc < $(MANPAGE-MSG) | gzip -c > $(APP_EXTRAS_DIR)/alacritty-msg.1.gz
-	@scdoc < $(MANPAGE-CONFIG) | gzip -c > $(APP_EXTRAS_DIR)/alacritty.5.gz
-	@scdoc < $(MANPAGE-CONFIG-BINDINGS) | gzip -c > $(APP_EXTRAS_DIR)/alacritty-bindings.5.gz
-	@scdoc < $(MANPAGE-ESCAPES) | gzip -c > $(APP_EXTRAS_DIR)/alacritty-escapes.7.gz
+	@scdoc < $(MANPAGE) | gzip -9nc > $(APP_EXTRAS_DIR)/alacritty.1.gz
+	@scdoc < $(MANPAGE-MSG) | gzip -9nc > $(APP_EXTRAS_DIR)/alacritty-msg.1.gz
+	@scdoc < $(MANPAGE-CONFIG) | gzip -9nc > $(APP_EXTRAS_DIR)/alacritty.5.gz
+	@scdoc < $(MANPAGE-CONFIG-BINDINGS) | gzip -9nc > $(APP_EXTRAS_DIR)/alacritty-bindings.5.gz
+	@scdoc < $(MANPAGE-ESCAPES) | gzip -9nc > $(APP_EXTRAS_DIR)/alacritty-escapes.7.gz
 	@tic -xe alacritty,alacritty-direct -o $(APP_EXTRAS_DIR) $(TERMINFO)
 	@cp -fRp $(APP_TEMPLATE) $(APP_DIR)
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" $(APP_DIR)/$(APP_NAME)/Contents/Info.plist
 	@cp -fp $(APP_BINARY) $(APP_BINARY_DIR)
 	@cp -fp $(COMPLETIONS) $(APP_COMPLETIONS_DIR)
 	@touch -r "$(APP_BINARY)" "$(APP_DIR)/$(APP_NAME)"
@@ -71,15 +76,18 @@ $(DMG_NAME)-%: $(APP_NAME)-%
 		-volname "Alacritty" \
 		-fs HFS+ \
 		-srcfolder $(APP_DIR) \
+		-imagekey zlib-level=9 \
 		-ov -format UDZO
 	@echo "Packed '$(APP_NAME)' in '$(APP_DIR)'"
 
-install: $(INSTALL)-native ## Mount disk image
-install-universal: $(INSTALL)-native ## Mount universal disk image
-$(INSTALL)-%: $(DMG_NAME)-%
+install: install-native ## Mount disk image
+install-universal: install-universal-image ## Mount universal disk image
+install-native: $(DMG_NAME)-native
+	@open $(DMG_DIR)/$(DMG_NAME)
+install-universal-image: $(DMG_NAME)-universal
 	@open $(DMG_DIR)/$(DMG_NAME)
 
-.PHONY: app binary clean dmg install $(TARGET) $(TARGET)-universal
+.PHONY: app app-universal binary binary-universal clean dmg dmg-universal install install-native install-universal install-universal-image $(TARGET)-native $(TARGET)-universal
 
 clean: ## Remove all build artifacts
 	@cargo clean

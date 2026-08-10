@@ -1,6 +1,7 @@
 use std::ffi::c_void;
 use std::io::Error;
 use std::num::NonZeroU32;
+use std::os::windows::io::{AsRawHandle, OwnedHandle};
 use std::os::windows::process::ExitStatusExt;
 use std::process::ExitStatus;
 use std::ptr;
@@ -10,9 +11,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use polling::os::iocp::{CompletionPacket, PollerIocpExt};
 use polling::{Event, Poller};
 
-use windows_sys::Win32::Foundation::{BOOLEAN, FALSE, HANDLE};
+use windows_sys::Win32::Foundation::{BOOLEAN, FALSE, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Threading::{
-    GetExitCodeProcess, GetProcessId, INFINITE, RegisterWaitForSingleObject, UnregisterWait,
+    GetExitCodeProcess, GetProcessId, INFINITE, RegisterWaitForSingleObject, UnregisterWaitEx,
     WT_EXECUTEINWAITTHREAD, WT_EXECUTEONLYONCE,
 };
 
@@ -35,7 +36,7 @@ extern "system" fn child_exit_callback(ctx: *mut c_void, timed_out: BOOLEAN) {
         return;
     }
 
-    let event_tx: Box<_> = unsafe { Box::from_raw(ctx as *mut ChildExitSender) };
+    let event_tx = unsafe { &*(ctx as *const ChildExitSender) };
 
     let mut exit_code = 0_u32;
     let child_handle = event_tx.child_handle.load(Ordering::Relaxed) as HANDLE;
@@ -53,28 +54,29 @@ pub struct ChildExitWatcher {
     wait_handle: AtomicPtr<c_void>,
     event_rx: mpsc::Receiver<ChildEvent>,
     interest: Arc<Mutex<Option<Interest>>>,
-    child_handle: AtomicPtr<c_void>,
+    child_handle: OwnedHandle,
+    _callback: Box<ChildExitSender>,
     pid: Option<NonZeroU32>,
 }
 
 impl ChildExitWatcher {
-    pub fn new(child_handle: HANDLE) -> Result<ChildExitWatcher, Error> {
+    pub fn new(child_handle: OwnedHandle) -> Result<ChildExitWatcher, Error> {
         let (event_tx, event_rx) = mpsc::channel();
 
         let mut wait_handle: HANDLE = ptr::null_mut();
         let interest = Arc::new(Mutex::new(None));
-        let sender_ref = Box::new(ChildExitSender {
+        let callback = Box::new(ChildExitSender {
             sender: event_tx,
             interest: interest.clone(),
-            child_handle: AtomicPtr::from(child_handle),
+            child_handle: AtomicPtr::from(child_handle.as_raw_handle()),
         });
 
         let success = unsafe {
             RegisterWaitForSingleObject(
                 &mut wait_handle,
-                child_handle,
+                child_handle.as_raw_handle() as HANDLE,
                 Some(child_exit_callback),
-                Box::into_raw(sender_ref).cast(),
+                (&*callback as *const ChildExitSender).cast_mut().cast(),
                 INFINITE,
                 WT_EXECUTEINWAITTHREAD | WT_EXECUTEONLYONCE,
             )
@@ -83,12 +85,14 @@ impl ChildExitWatcher {
         if success == 0 {
             Err(Error::last_os_error())
         } else {
-            let pid = unsafe { NonZeroU32::new(GetProcessId(child_handle)) };
+            let pid =
+                unsafe { NonZeroU32::new(GetProcessId(child_handle.as_raw_handle() as HANDLE)) };
             Ok(ChildExitWatcher {
                 event_rx,
                 interest,
                 pid,
-                child_handle: AtomicPtr::from(child_handle),
+                child_handle,
+                _callback: callback,
                 wait_handle: AtomicPtr::from(wait_handle),
             })
         }
@@ -115,7 +119,7 @@ impl ChildExitWatcher {
     /// If you terminate the process using this handle, the terminal will get a
     /// timeout error, and the child watcher will emit an `Exited` event.
     pub fn raw_handle(&self) -> HANDLE {
-        self.child_handle.load(Ordering::Relaxed) as HANDLE
+        self.child_handle.as_raw_handle() as HANDLE
     }
 
     /// Retrieve the Process ID associated to the underlying child process.
@@ -127,17 +131,22 @@ impl ChildExitWatcher {
 impl Drop for ChildExitWatcher {
     fn drop(&mut self) {
         unsafe {
-            UnregisterWait(self.wait_handle.load(Ordering::Relaxed) as HANDLE);
+            let _ = UnregisterWaitEx(
+                self.wait_handle.load(Ordering::Relaxed) as HANDLE,
+                INVALID_HANDLE_VALUE,
+            );
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::io::{FromRawHandle, IntoRawHandle, OwnedHandle};
     use std::process::Command;
     use std::sync::Arc;
     use std::time::Duration;
+
+    use windows_sys::Win32::System::Threading::TerminateProcess;
 
     use super::super::PTY_CHILD_EVENT_TOKEN;
     use super::*;
@@ -148,11 +157,12 @@ mod tests {
 
         let poller = Arc::new(Poller::new().unwrap());
 
-        let mut child = Command::new("cmd.exe").spawn().unwrap();
-        let child_exit_watcher = ChildExitWatcher::new(child.as_raw_handle() as HANDLE).unwrap();
+        let child = Command::new("cmd.exe").spawn().unwrap();
+        let child_handle = unsafe { OwnedHandle::from_raw_handle(child.into_raw_handle()) };
+        let child_exit_watcher = ChildExitWatcher::new(child_handle).unwrap();
         child_exit_watcher.register(&poller, Event::readable(PTY_CHILD_EVENT_TOKEN));
 
-        child.kill().unwrap();
+        assert_ne!(unsafe { TerminateProcess(child_exit_watcher.raw_handle(), 1) }, 0);
 
         // Poll for the event or fail with timeout if nothing has been sent.
         let mut events = polling::Events::new();

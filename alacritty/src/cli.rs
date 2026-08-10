@@ -35,6 +35,10 @@ pub struct Options {
 
     /// Specify alternative configuration file [default:
     /// $XDG_CONFIG_HOME/alacritty/alacritty.toml].
+    #[allow(
+        clippy::doc_markdown,
+        reason = "clap renders this text as terminal help, not Markdown"
+    )]
     #[cfg(not(any(target_os = "macos", windows)))]
     #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
@@ -181,7 +185,7 @@ impl TerminalOptions {
             if working_directory.is_dir() {
                 pty_config.working_directory = Some(working_directory.to_owned());
             } else {
-                error!("Invalid working directory: {working_directory:?}");
+                error!("Invalid working directory: {}", working_directory.display());
             }
         }
 
@@ -214,6 +218,10 @@ pub struct WindowIdentity {
     pub title: Option<String>,
 
     /// Defines window class/app_id on X11/Wayland [default: Alacritty].
+    #[allow(
+        clippy::doc_markdown,
+        reason = "clap renders this text as terminal help, not Markdown"
+    )]
     #[clap(long, value_name = "general> | <general>,<instance", value_parser = parse_class)]
     pub class: Option<Class>,
 }
@@ -388,14 +396,14 @@ impl ParsedOptions {
                         target: LOG_TARGET_IPC_CONFIG,
                         "Unable to override option '{option}': {err}"
                     );
-                    self.config_options.swap_remove(i);
+                    let _ = self.config_options.swap_remove(i);
                 },
                 Ok(_) => i += 1,
             }
         }
     }
 
-    /// Apply CLI config overrides to a CoW config.
+    /// Apply CLI config overrides to a `CoW` config.
     pub fn override_config_rc(&mut self, config: Rc<UiConfig>) -> Rc<UiConfig> {
         // Skip clone without write requirement.
         if self.config_options.is_empty() {
@@ -519,13 +527,13 @@ mod tests {
     #[test]
     fn valid_decimal() {
         let value = parse_hex_or_decimal("10485773");
-        assert_eq!(value, Some(10485773));
+        assert_eq!(value, Some(10_485_773));
     }
 
     #[test]
     fn valid_hex_to_decimal() {
         let value = parse_hex_or_decimal("0xa0000d");
-        assert_eq!(value, Some(10485773));
+        assert_eq!(value, Some(10_485_773));
     }
 
     #[test]

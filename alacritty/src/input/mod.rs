@@ -10,7 +10,6 @@ use std::cmp::{Ordering, max, min};
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::mem;
 use std::time::{Duration, Instant};
 
@@ -67,19 +66,20 @@ const SELECTION_SCROLLING_STEP: f64 = 20.;
 /// Distance before a touch input is considered a drag.
 const MAX_TAP_DISTANCE: f64 = 20.;
 
-/// Threshold used for double_click/triple_click.
+/// Threshold used for `double_click/triple_click`.
 const CLICK_THRESHOLD: Duration = Duration::from_millis(400);
 
 /// Processes input from winit.
 ///
 /// An escape sequence may be emitted in case specific keys or key combinations
 /// are activated.
-pub struct Processor<T: EventListener, A: ActionContext<T>> {
+pub struct Processor<A: ActionContext> {
     pub ctx: A,
-    _phantom: PhantomData<T>,
 }
 
-pub trait ActionContext<T: EventListener> {
+pub trait ActionContext {
+    type Listener: EventListener;
+
     fn write_to_pty<B: Into<Cow<'static, [u8]>>>(&self, _data: B) {}
     fn mark_dirty(&mut self) {}
     fn size_info(&self) -> SizeInfo;
@@ -96,8 +96,8 @@ pub trait ActionContext<T: EventListener> {
     fn scroll(&mut self, _scroll: Scroll) {}
     fn window(&mut self) -> &mut Window;
     fn display(&mut self) -> &mut Display;
-    fn terminal(&self) -> &Term<T>;
-    fn terminal_mut(&mut self) -> &mut Term<T>;
+    fn terminal(&self) -> &Term<Self::Listener>;
+    fn terminal_mut(&mut self) -> &mut Term<Self::Listener>;
     fn spawn_new_instance(&mut self) {}
     #[cfg(target_os = "macos")]
     fn create_new_window(&mut self, _tabbing_id: Option<String>) {}
@@ -147,11 +147,7 @@ pub trait ActionContext<T: EventListener> {
 }
 
 impl Action {
-    fn toggle_selection<T, A>(ctx: &mut A, ty: SelectionType)
-    where
-        A: ActionContext<T>,
-        T: EventListener,
-    {
+    fn toggle_selection<A: ActionContext>(ctx: &mut A, ty: SelectionType) {
         ctx.toggle_selection(ty, ctx.terminal().vi_mode_cursor.point, Side::Left);
 
         // Make sure initial selection is not empty.
@@ -161,13 +157,9 @@ impl Action {
     }
 }
 
-trait Execute<T: EventListener> {
-    fn execute<A: ActionContext<T>>(&self, ctx: &mut A);
-}
-
-impl<T: EventListener> Execute<T> for Action {
+impl Action {
     #[inline]
-    fn execute<A: ActionContext<T>>(&self, ctx: &mut A) {
+    fn execute<A: ActionContext>(&self, ctx: &mut A) {
         match self {
             Action::Esc(s) => ctx.paste(s, false),
             Action::Command(program) => ctx.spawn_daemon(program.program(), program.args()),
@@ -177,7 +169,7 @@ impl<T: EventListener> Execute<T> for Action {
             },
             Action::ToggleViMode => {
                 ctx.on_typing_start();
-                ctx.toggle_vi_mode()
+                ctx.toggle_vi_mode();
             },
             action @ (Action::ViMotion(_) | Action::Vi(_))
                 if !ctx.terminal().mode().contains(TermMode::VI) =>
@@ -269,16 +261,16 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.scroll(Scroll::Delta(scroll_lines));
             },
             Action::Vi(ViAction::InlineSearchForward) => {
-                ctx.start_inline_search(Direction::Right, false)
+                ctx.start_inline_search(Direction::Right, false);
             },
             Action::Vi(ViAction::InlineSearchBackward) => {
-                ctx.start_inline_search(Direction::Left, false)
+                ctx.start_inline_search(Direction::Left, false);
             },
             Action::Vi(ViAction::InlineSearchForwardShort) => {
-                ctx.start_inline_search(Direction::Right, true)
+                ctx.start_inline_search(Direction::Right, true);
             },
             Action::Vi(ViAction::InlineSearchBackwardShort) => {
-                ctx.start_inline_search(Direction::Left, true)
+                ctx.start_inline_search(Direction::Left, true);
             },
             Action::Vi(ViAction::InlineSearchNext) => ctx.inline_search_next(),
             Action::Vi(ViAction::InlineSearchPrevious) => ctx.inline_search_previous(),
@@ -445,9 +437,9 @@ impl<T: EventListener> Execute<T> for Action {
     }
 }
 
-impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
+impl<A: ActionContext> Processor<A> {
     pub fn new(ctx: A) -> Self {
-        Self { ctx, _phantom: Default::default() }
+        Self { ctx }
     }
 
     #[inline]
@@ -580,23 +572,24 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             return;
         }
 
-        let mut msg = vec![b'\x1b', b'[', b'M', 32 + button];
+        let mut msg = Vec::with_capacity(8);
+        msg.extend_from_slice(&[b'\x1b', b'[', b'M', 32 + button]);
 
-        let mouse_pos_encode = |pos: usize| -> Vec<u8> {
+        let mouse_pos_encode = |message: &mut Vec<u8>, pos: usize| {
             let pos = 32 + 1 + pos;
             let first = 0xC0 + pos / 64;
             let second = 0x80 + (pos & 63);
-            vec![first as u8, second as u8]
+            message.extend_from_slice(&[first as u8, second as u8]);
         };
 
         if utf8 && column >= Column(95) {
-            msg.append(&mut mouse_pos_encode(column.0));
+            mouse_pos_encode(&mut msg, column.0);
         } else {
             msg.push(32 + 1 + column.0 as u8);
         }
 
         if utf8 && line >= 95 {
-            msg.append(&mut mouse_pos_encode(line.0 as usize));
+            mouse_pos_encode(&mut msg, line.0 as usize);
         } else {
             msg.push(32 + 1 + line.0 as u8);
         }
@@ -651,7 +644,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             let point = self.ctx.mouse().point(&self.ctx.size_info(), display_offset);
 
             if let MouseButton::Left = button {
-                self.on_left_click(point)
+                self.on_left_click(point);
             }
         }
     }
@@ -684,7 +677,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 self.ctx.start_selection(SelectionType::Lines, point, side);
             },
             _ => (),
-        };
+        }
 
         // Move vi mode cursor to mouse click position.
         if self.ctx.terminal().mode().contains(TermMode::VI) && !self.ctx.search_active() {
@@ -714,7 +707,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         self.ctx.display().highlighted_hint = hint;
 
         let timer_id = TimerId::new(Topic::SelectionScrolling, self.ctx.window().id());
-        self.ctx.scheduler_mut().unschedule(timer_id);
+        let _ = self.ctx.scheduler_mut().unschedule(timer_id);
 
         if let MouseButton::Left | MouseButton::Right = button {
             // Copy selection on release, to prevent flooding the display server.
@@ -780,7 +773,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         if lines != 0 && self.process_mouse_bindings(event) {
             // Repeat for remaining number of lines.
             for _ in 1..lines {
-                self.process_mouse_bindings(event);
+                let _ = self.process_mouse_bindings(event);
             }
         } else if self.ctx.mouse_mode() {
             let code = if is_scroll_up { MOUSE_WHEEL_UP } else { MOUSE_WHEEL_DOWN };
@@ -862,17 +855,17 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             TouchPurpose::Zoom(zoom) => {
                 let slots = zoom.slots();
                 let mut set = HashSet::default();
-                set.insert(slots.0.id);
-                set.insert(slots.1.id);
+                let _ = set.insert(slots.0.id);
+                let _ = set.insert(slots.1.id);
                 TouchPurpose::Invalid(set)
             },
             TouchPurpose::Scroll(event) | TouchPurpose::Select(event) => {
                 let mut set = HashSet::default();
-                set.insert(event.id);
+                let _ = set.insert(event.id);
                 TouchPurpose::Invalid(set)
             },
             TouchPurpose::Invalid(mut slots) => {
-                slots.insert(touch.id);
+                let _ = slots.insert(touch.id);
                 TouchPurpose::Invalid(slots)
             },
         };
@@ -950,7 +943,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
             TouchPurpose::ZoomPendingSlot(_) => *touch_purpose = Default::default(),
             // Reset touch state once all slots were released.
             TouchPurpose::Invalid(slots) => {
-                slots.remove(&touch.id);
+                let _ = slots.remove(&touch.id);
                 if slots.is_empty() {
                     *touch_purpose = Default::default();
                 }
@@ -1025,7 +1018,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                 ElementState::Pressed => {
                     // Process mouse press before bindings to update the `click_state`.
                     self.on_mouse_press(button);
-                    self.process_mouse_bindings(MouseEvent::Button(button));
+                    let _ = self.process_mouse_bindings(MouseEvent::Button(button));
                 },
                 ElementState::Released => self.on_mouse_release(button),
             }
@@ -1134,7 +1127,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         } else if mouse_y >= start_bottom {
             start_bottom - mouse_y - step
         } else {
-            scheduler.unschedule(TimerId::new(Topic::SelectionScrolling, window_id));
+            let _ = scheduler.unschedule(TimerId::new(Topic::SelectionScrolling, window_id));
             return;
         };
 
@@ -1143,7 +1136,7 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
 
         // Schedule event.
         let timer_id = TimerId::new(Topic::SelectionScrolling, window_id);
-        scheduler.unschedule(timer_id);
+        let _ = scheduler.unschedule(timer_id);
         scheduler.schedule(event, SELECTION_SCROLLING_INTERVAL, true, timer_id);
     }
 }
@@ -1177,7 +1170,9 @@ mod tests {
         inline_search_state: &'a mut InlineSearchState,
     }
 
-    impl<T: EventListener> super::ActionContext<T> for ActionContext<'_, T> {
+    impl<T: EventListener> super::ActionContext for ActionContext<'_, T> {
+        type Listener = T;
+
         fn search_next(
             &mut self,
             _origin: Point,
@@ -1199,11 +1194,11 @@ mod tests {
             false
         }
 
-        fn terminal(&self) -> &Term<T> {
+        fn terminal(&self) -> &Term<Self::Listener> {
             self.terminal
         }
 
-        fn terminal_mut(&mut self) -> &mut Term<T> {
+        fn terminal_mut(&mut self) -> &mut Term<Self::Listener> {
             self.terminal
         }
 

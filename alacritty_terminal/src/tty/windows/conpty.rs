@@ -1,30 +1,31 @@
 use log::{info, warn};
-use std::collections::{HashMap, HashSet};
-use std::ffi::OsStr;
-use std::io::{Error, Result};
-use std::os::windows::ffi::OsStrExt;
-use std::os::windows::io::IntoRawHandle;
+use std::collections::{BTreeMap, HashMap};
+use std::ffi::{OsStr, OsString};
+use std::io::{Error, ErrorKind, Result};
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle};
 use std::{mem, ptr};
 
-use windows_sys::Win32::Foundation::{HANDLE, S_OK};
+use windows_sys::Win32::Foundation::{HANDLE, HMODULE, S_OK};
 use windows_sys::Win32::System::Console::{
     COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole,
 };
-use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+use windows_sys::Win32::System::LibraryLoader::{FreeLibrary, GetProcAddress, LoadLibraryW};
 use windows_sys::core::{HRESULT, PWSTR};
 use windows_sys::{s, w};
 
 use windows_sys::Win32::System::Threading::{
-    CREATE_UNICODE_ENVIRONMENT, CreateProcessW, EXTENDED_STARTUPINFO_PRESENT,
-    InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, UpdateProcThreadAttribute,
+    CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
+    EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    STARTUPINFOW, UpdateProcThreadAttribute,
 };
 
 use crate::event::{OnResize, WindowSize};
 use crate::tty::Options;
 use crate::tty::windows::blocking::{UnblockedReader, UnblockedWriter};
 use crate::tty::windows::child::ChildExitWatcher;
-use crate::tty::windows::{Pty, cmdline, win32_string};
+use crate::tty::windows::{Pty, application, cmdline};
 
 const PIPE_CAPACITY: usize = crate::event_loop::READ_BUFFER_SIZE;
 
@@ -46,6 +47,17 @@ struct ConptyApi {
     create: CreatePseudoConsoleFn,
     resize: ResizePseudoConsoleFn,
     close: ClosePseudoConsoleFn,
+    _library: Option<DynamicLibrary>,
+}
+
+struct DynamicLibrary(HMODULE);
+
+impl Drop for DynamicLibrary {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = FreeLibrary(self.0);
+        }
+    }
 }
 
 impl ConptyApi {
@@ -62,6 +74,7 @@ impl ConptyApi {
                     create: CreatePseudoConsole,
                     resize: ResizePseudoConsole,
                     close: ClosePseudoConsole,
+                    _library: None,
                 }
             },
         }
@@ -75,6 +88,7 @@ impl ConptyApi {
             if hmodule.is_null() {
                 return None;
             }
+            let library = DynamicLibrary(hmodule);
             let create_fn = GetProcAddress(hmodule, s!("CreatePseudoConsole"))?;
             let resize_fn = GetProcAddress(hmodule, s!("ResizePseudoConsole"))?;
             let close_fn = GetProcAddress(hmodule, s!("ClosePseudoConsole"))?;
@@ -83,6 +97,7 @@ impl ConptyApi {
                 create: mem::transmute::<LoadedFn, CreatePseudoConsoleFn>(create_fn),
                 resize: mem::transmute::<LoadedFn, ResizePseudoConsoleFn>(resize_fn),
                 close: mem::transmute::<LoadedFn, ClosePseudoConsoleFn>(close_fn),
+                _library: Some(library),
             })
         }
     }
@@ -90,7 +105,7 @@ impl ConptyApi {
 
 /// RAII Pseudoconsole.
 pub struct Conpty {
-    pub handle: HPCON,
+    handle: HPCON,
     api: ConptyApi,
 }
 
@@ -107,6 +122,55 @@ impl Drop for Conpty {
 // The ConPTY handle can be sent between threads.
 unsafe impl Send for Conpty {}
 
+struct ThreadAttributeList {
+    _storage: Box<[u8]>,
+    pointer: LPPROC_THREAD_ATTRIBUTE_LIST,
+}
+
+impl ThreadAttributeList {
+    fn new() -> Result<Self> {
+        let mut size = 0;
+        unsafe {
+            InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut size);
+        }
+        if size == 0 {
+            return Err(Error::last_os_error());
+        }
+
+        let mut storage = vec![0; size].into_boxed_slice();
+        let pointer = storage.as_mut_ptr().cast();
+        let success = unsafe { InitializeProcThreadAttributeList(pointer, 1, 0, &mut size) };
+        if success == 0 {
+            return Err(Error::last_os_error());
+        }
+
+        Ok(Self { _storage: storage, pointer })
+    }
+
+    fn attach_conpty(&mut self, handle: HPCON) -> Result<()> {
+        let success = unsafe {
+            UpdateProcThreadAttribute(
+                self.pointer,
+                0,
+                PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize,
+                handle as *mut std::ffi::c_void,
+                mem::size_of::<HPCON>(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        if success == 0 { Err(Error::last_os_error()) } else { Ok(()) }
+    }
+}
+
+impl Drop for ThreadAttributeList {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteProcThreadAttributeList(self.pointer);
+        }
+    }
+}
+
 pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
     let api = ConptyApi::new();
     let mut pty_handle: HPCON = 0;
@@ -117,25 +181,28 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
     // start point.
     let (conout, conout_pty_handle) = miow::pipe::anonymous(0)?;
     let (conin_pty_handle, conin) = miow::pipe::anonymous(0)?;
+    let conout_pty_handle =
+        unsafe { OwnedHandle::from_raw_handle(conout_pty_handle.into_raw_handle()) };
+    let conin_pty_handle =
+        unsafe { OwnedHandle::from_raw_handle(conin_pty_handle.into_raw_handle()) };
 
     // Create the Pseudo Console, using the pipes.
     let result = unsafe {
         (api.create)(
             window_size.into(),
-            conin_pty_handle.into_raw_handle() as HANDLE,
-            conout_pty_handle.into_raw_handle() as HANDLE,
+            conin_pty_handle.as_raw_handle() as HANDLE,
+            conout_pty_handle.as_raw_handle() as HANDLE,
             0,
             &mut pty_handle as *mut _,
         )
     };
 
-    assert_eq!(result, S_OK);
-
-    let mut success;
+    if result != S_OK {
+        return Err(Error::other(format!("CreatePseudoConsole failed with HRESULT {result:#x}")));
+    }
+    let conpty = Conpty { handle: pty_handle, api };
 
     // Prepare child process startup info.
-
-    let mut size: usize = 0;
 
     let mut startup_info_ex: STARTUPINFOEXW = unsafe { mem::zeroed() };
 
@@ -147,65 +214,20 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
     // PTY process does not inherit any handles from this Alacritty process.
     startup_info_ex.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
 
-    // Create the appropriately sized thread attribute list.
-    unsafe {
-        let failure =
-            InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut size as *mut usize) > 0;
-
-        // This call was expected to return false.
-        if failure {
-            return Err(Error::last_os_error());
-        }
-    }
-
-    let mut attr_list: Box<[u8]> = vec![0; size].into_boxed_slice();
-
-    // Set startup info's attribute list & initialize it
-    //
-    // Lint failure is spurious; it's because winapi's definition of PROC_THREAD_ATTRIBUTE_LIST
-    // implies it is one pointer in size (32 or 64 bits) but really this is just a dummy value.
-    // Casting a *mut u8 (pointer to 8 bit type) might therefore not be aligned correctly in
-    // the compiler's eyes.
-    #[allow(clippy::cast_ptr_alignment)]
-    {
-        startup_info_ex.lpAttributeList = attr_list.as_mut_ptr() as _;
-    }
-
-    unsafe {
-        success = InitializeProcThreadAttributeList(
-            startup_info_ex.lpAttributeList,
-            1,
-            0,
-            &mut size as *mut usize,
-        ) > 0;
-
-        if !success {
-            return Err(Error::last_os_error());
-        }
-    }
-
-    // Set thread attribute list's Pseudo Console to the specified ConPTY.
-    unsafe {
-        success = UpdateProcThreadAttribute(
-            startup_info_ex.lpAttributeList,
-            0,
-            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize,
-            pty_handle as *mut std::ffi::c_void,
-            mem::size_of::<HPCON>(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-        ) > 0;
-
-        if !success {
-            return Err(Error::last_os_error());
-        }
-    }
+    let mut attr_list = ThreadAttributeList::new()?;
+    attr_list.attach_conpty(conpty.handle)?;
+    startup_info_ex.lpAttributeList = attr_list.pointer;
 
     // Prepare child process creation arguments.
-    let cmdline = win32_string(&cmdline(config));
-    let cwd = config.working_directory.as_ref().map(win32_string);
+    let application = checked_win32_string(OsStr::new(application(config)))?;
+    let mut cmdline = checked_win32_string(OsStr::new(&cmdline(config)))?;
+    let cwd = config
+        .working_directory
+        .as_ref()
+        .map(|path| checked_win32_string(path.as_os_str()))
+        .transpose()?;
     let mut creation_flags = EXTENDED_STARTUPINFO_PRESENT;
-    let custom_env_block = convert_custom_env(&config.env);
+    let custom_env_block = convert_custom_env(&config.env)?;
     let custom_env_block_pointer = match &custom_env_block {
         Some(custom_env_block) => {
             creation_flags |= CREATE_UNICODE_ENVIRONMENT;
@@ -216,9 +238,9 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
 
     let mut proc_info: PROCESS_INFORMATION = unsafe { mem::zeroed() };
     unsafe {
-        success = CreateProcessW(
-            ptr::null(),
-            cmdline.as_ptr() as PWSTR,
+        let success = CreateProcessW(
+            application.as_ptr(),
+            cmdline.as_mut_ptr() as PWSTR,
             ptr::null_mut(),
             ptr::null_mut(),
             false as i32,
@@ -227,18 +249,21 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
             cwd.as_ref().map_or_else(ptr::null, |s| s.as_ptr()),
             &mut startup_info_ex.StartupInfo as *mut STARTUPINFOW,
             &mut proc_info as *mut PROCESS_INFORMATION,
-        ) > 0;
+        );
 
-        if !success {
+        if success == 0 {
             return Err(Error::last_os_error());
         }
     }
 
+    let process_handle = unsafe { OwnedHandle::from_raw_handle(proc_info.hProcess as _) };
+    let thread_handle = unsafe { OwnedHandle::from_raw_handle(proc_info.hThread as _) };
+    drop(thread_handle);
+
     let conin = UnblockedWriter::new(conin, PIPE_CAPACITY);
     let conout = UnblockedReader::new(conout, PIPE_CAPACITY);
 
-    let child_watcher = ChildExitWatcher::new(proc_info.hProcess)?;
-    let conpty = Conpty { handle: pty_handle as HPCON, api };
+    let child_watcher = ChildExitWatcher::new(process_handle)?;
 
     Ok(Pty::new(conpty, conout, conin, child_watcher))
 }
@@ -247,43 +272,33 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
 // deduplicating environment variables, so do that here while converting.
 //
 // https://learn.microsoft.com/en-us/previous-versions/troubleshoot/windows/win32/createprocess-cannot-eliminate-duplicate-variables#environment-variables
-fn convert_custom_env(custom_env: &HashMap<String, String>) -> Option<Vec<u16>> {
+fn convert_custom_env(custom_env: &HashMap<String, String>) -> Result<Option<Vec<u16>>> {
     // Windows inherits parent's env when no `lpEnvironment` parameter is specified.
     if custom_env.is_empty() {
-        return None;
+        return Ok(None);
+    }
+
+    let mut environment = BTreeMap::new();
+    for (inherited_key, inherited_value) in std::env::vars_os() {
+        insert_environment(&mut environment, inherited_key, inherited_value)?;
+    }
+    // Configuration wins over inherited variables, case-insensitively.
+    for (key, value) in custom_env {
+        if key.is_empty() || key.contains('=') {
+            return Err(Error::new(ErrorKind::InvalidInput, "invalid environment variable name"));
+        }
+        insert_environment(&mut environment, OsString::from(key), OsString::from(value))?;
     }
 
     let mut converted_block = Vec::new();
-    let mut all_env_keys = HashSet::new();
-    for (custom_key, custom_value) in custom_env {
-        let custom_key_os = OsStr::new(custom_key);
-        if all_env_keys.insert(custom_key_os.to_ascii_uppercase()) {
-            add_windows_env_key_value_to_block(
-                &mut converted_block,
-                custom_key_os,
-                OsStr::new(&custom_value),
-            );
-        } else {
-            warn!(
-                "Omitting environment variable pair with duplicate key: \
-                 '{custom_key}={custom_value}'"
-            );
-        }
+    for (_, (key, value)) in environment {
+        converted_block.extend(key);
+        converted_block.push('=' as u16);
+        converted_block.extend(value);
+        converted_block.push(0);
     }
-
-    // Pull the current process environment after, to avoid overwriting the user provided one.
-    for (inherited_key, inherited_value) in std::env::vars_os() {
-        if all_env_keys.insert(inherited_key.to_ascii_uppercase()) {
-            add_windows_env_key_value_to_block(
-                &mut converted_block,
-                &inherited_key,
-                &inherited_value,
-            );
-        }
-    }
-
     converted_block.push(0);
-    Some(converted_block)
+    Ok(Some(converted_block))
 }
 
 // According to the `lpEnvironment` parameter description:
@@ -293,17 +308,39 @@ fn convert_custom_env(custom_env: &HashMap<String, String>) -> Option<Vec<u16>> 
 // string is in the following form:
 // >
 // > name=value\0
-fn add_windows_env_key_value_to_block(block: &mut Vec<u16>, key: &OsStr, value: &OsStr) {
-    block.extend(key.encode_wide());
-    block.push('=' as u16);
-    block.extend(value.encode_wide());
-    block.push(0);
+fn insert_environment(
+    environment: &mut BTreeMap<Vec<u16>, (Vec<u16>, Vec<u16>)>,
+    key: OsString,
+    value: OsString,
+) -> Result<()> {
+    let key = encode_without_nul(&key)?;
+    let value = encode_without_nul(&value)?;
+    let folded = OsString::from_wide(&key).to_ascii_uppercase().encode_wide().collect();
+    environment.insert(folded, (key, value));
+    Ok(())
+}
+
+fn checked_win32_string(value: &OsStr) -> Result<Vec<u16>> {
+    let mut encoded = encode_without_nul(value)?;
+    encoded.push(0);
+    Ok(encoded)
+}
+
+fn encode_without_nul(value: &OsStr) -> Result<Vec<u16>> {
+    let encoded = value.encode_wide().collect::<Vec<_>>();
+    if encoded.contains(&0) {
+        Err(Error::new(ErrorKind::InvalidInput, "embedded NUL in Windows process input"))
+    } else {
+        Ok(encoded)
+    }
 }
 
 impl OnResize for Conpty {
     fn on_resize(&mut self, window_size: WindowSize) {
         let result = unsafe { (self.api.resize)(self.handle, window_size.into()) };
-        assert_eq!(result, S_OK);
+        if result != S_OK {
+            warn!("ResizePseudoConsole failed with HRESULT {result:#x}");
+        }
     }
 }
 
@@ -311,6 +348,6 @@ impl From<WindowSize> for COORD {
     fn from(window_size: WindowSize) -> Self {
         let lines = window_size.num_lines;
         let columns = window_size.num_cols;
-        COORD { X: columns as i16, Y: lines as i16 }
+        COORD { X: columns.min(i16::MAX as u16) as i16, Y: lines.min(i16::MAX as u16) as i16 }
     }
 }

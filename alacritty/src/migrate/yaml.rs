@@ -1,6 +1,6 @@
 //! Migration of legacy YAML files to TOML.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use toml::Value;
 
@@ -13,8 +13,7 @@ pub fn migrate(
     options: &MigrateOptions,
     path: &Path,
     recursion_limit: usize,
-    prefix: &str,
-) -> Result<String, String> {
+) -> Result<PathBuf, String> {
     // Try to parse the configuration file.
     let mut config = match config::deserialize_config(path, !options.dry_run) {
         Ok(config) => config,
@@ -28,7 +27,7 @@ pub fn migrate(
 
     // Convert to TOML format.
     let mut toml = toml::to_string(&config).map_err(|err| format!("conversion error: {err}"))?;
-    let new_path = format!("{prefix}.toml");
+    let new_path = path.with_extension("toml");
 
     // Apply TOML migration, without recursing through imports.
     toml = migrate_toml(toml)?.to_string();
@@ -62,9 +61,12 @@ fn migrate_imports(
         // Keep yaml import if path does not exist.
         if !import.exists() {
             if options.dry_run {
-                eprintln!("Keeping yaml config for nonexistent import: {import:?}");
+                eprintln!("Keeping yaml config for nonexistent import: {}", import.display());
             }
-            new_imports.push(Value::String(import.to_string_lossy().into()));
+            let import = import
+                .to_str()
+                .ok_or_else(|| format!("import path is not valid UTF-8: {}", import.display()))?;
+            new_imports.push(Value::String(import.into()));
             continue;
         }
 
@@ -75,7 +77,10 @@ fn migrate_imports(
             println!("{}", migration.success_message(true));
         }
 
-        new_imports.push(Value::String(migration.new_path()));
+        let new_path = migration.new_path().to_str().ok_or_else(|| {
+            format!("migrated import path is not valid UTF-8: {}", import.display())
+        })?;
+        new_imports.push(Value::String(new_path.into()));
     }
 
     // Update the imports field.

@@ -152,10 +152,16 @@ impl<'de> Deserialize<'de> for Size {
             }
 
             fn visit_f64<E: de::Error>(self, value: f64) -> Result<Self::Value, E> {
+                if !value.is_finite() || value <= 0. || value > f64::from(f32::MAX) {
+                    return Err(E::custom("font size must be finite and greater than zero"));
+                }
                 Ok(Size(FontSize::new(value as f32)))
             }
 
             fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                if value <= 0 {
+                    return Err(E::custom("font size must be greater than zero"));
+                }
                 Ok(Size(FontSize::new(value as f32)))
             }
         }
@@ -170,5 +176,20 @@ impl Serialize for Size {
         S: Serializer,
     {
         serializer.serialize_f32(self.0.as_pt())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn font_size_rejects_non_positive_and_non_finite_values() {
+        for value in [toml::Value::Integer(0), toml::Value::Integer(-1)] {
+            assert!(Size::deserialize(value).is_err());
+        }
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(Size::deserialize(toml::Value::Float(value)).is_err());
+        }
     }
 }

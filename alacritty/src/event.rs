@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt::Debug;
+use std::io;
 #[cfg(not(windows))]
 use std::os::unix::io::RawFd;
 #[cfg(unix)]
@@ -98,12 +99,14 @@ pub struct Processor {
     global_ipc_options: ParsedOptions,
     cli_options: CliOptions,
     config: Rc<UiConfig>,
+    runtime_environment: Rc<HashMap<String, String>>,
 }
 
 impl Processor {
     /// Create a new event processor.
     pub fn new(
         config: UiConfig,
+        runtime_environment: HashMap<String, String>,
         cli_options: CliOptions,
         event_loop: &EventLoop<Event>,
     ) -> Processor {
@@ -116,7 +119,13 @@ impl Processor {
 
         // SAFETY: Since this takes a pointer to the winit event loop, it MUST be dropped first,
         // which is done in `loop_exiting`.
-        let clipboard = unsafe { Clipboard::new(event_loop.display_handle().unwrap().as_raw()) };
+        let clipboard = match event_loop.display_handle() {
+            Ok(handle) => unsafe { Clipboard::new(handle.as_raw()) },
+            Err(err) => {
+                warn!("Unable to access display clipboard: {err}");
+                Clipboard::new_nop()
+            },
+        };
 
         // Create a config monitor.
         //
@@ -136,6 +145,7 @@ impl Processor {
             scheduler,
             gl_config: None,
             config: Rc::new(config),
+            runtime_environment: Rc::new(runtime_environment),
             clipboard,
             windows: Default::default(),
             #[cfg(unix)]
@@ -157,11 +167,16 @@ impl Processor {
             event_loop,
             self.proxy.clone(),
             self.config.clone(),
+            self.runtime_environment.clone(),
             window_options,
         )?;
 
         self.gl_config = Some(window_context.display.gl_context().config());
-        self.windows.insert(window_context.id(), window_context);
+        let window_id = window_context.id();
+        if self.windows.contains_key(&window_id) {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "duplicate window id").into());
+        }
+        let _ = self.windows.insert(window_id, window_context);
 
         Ok(())
     }
@@ -172,7 +187,10 @@ impl Processor {
         event_loop: &ActiveEventLoop,
         options: WindowOptions,
     ) -> Result<(), Box<dyn Error>> {
-        let gl_config = self.gl_config.as_ref().unwrap();
+        let gl_config = self
+            .gl_config
+            .as_ref()
+            .ok_or_else(|| io::Error::other("graphics platform is not initialized"))?;
 
         // Override config with CLI/IPC options.
         let mut config_overrides = options.config_overrides();
@@ -186,11 +204,16 @@ impl Processor {
             event_loop,
             self.proxy.clone(),
             config,
+            self.runtime_environment.clone(),
             options,
             config_overrides,
         )?;
 
-        self.windows.insert(window_context.id(), window_context);
+        let window_id = window_context.id();
+        if self.windows.contains_key(&window_id) {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "duplicate window id").into());
+        }
+        let _ = self.windows.insert(window_id, window_context);
         Ok(())
     }
 
@@ -235,12 +258,12 @@ impl ApplicationHandler<Event> for Processor {
             return;
         }
 
-        if let Some(window_options) = self.initial_window_options.take() {
-            if let Err(err) = self.create_initial_window(event_loop, window_options) {
-                self.initial_window_error = Some(err);
-                event_loop.exit();
-                return;
-            }
+        if let Some(window_options) = self.initial_window_options.take()
+            && let Err(err) = self.create_initial_window(event_loop, window_options)
+        {
+            self.initial_window_error = Some(err);
+            event_loop.exit();
+            return;
         }
 
         info!("Initialisation complete");
@@ -432,8 +455,10 @@ impl ApplicationHandler<Event> for Processor {
                 // Shutdown if no more terminals are open.
                 if self.windows.is_empty() && !self.cli_options.daemon {
                     // Write ref tests of last window to disk.
-                    if self.config.debug.ref_test {
-                        window_context.write_ref_test_results();
+                    if self.config.debug.ref_test
+                        && let Err(err) = window_context.write_ref_test_results()
+                    {
+                        error!("Unable to write reference-test results: {err}");
                     }
 
                     event_loop.exit();
@@ -460,7 +485,7 @@ impl ApplicationHandler<Event> for Processor {
                     );
                 }
             },
-        };
+        }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -670,6 +695,7 @@ pub struct ActionContext<'a, N, T> {
     pub display: &'a mut Display,
     pub message_buffer: &'a mut MessageBuffer,
     pub config: &'a UiConfig,
+    pub launch_environment: &'a HashMap<String, String>,
     pub cursor_blink_timed_out: &'a mut bool,
     pub prev_bell_cmd: &'a mut Option<Instant>,
     #[cfg(target_os = "macos")]
@@ -687,7 +713,9 @@ pub struct ActionContext<'a, N, T> {
     pub shell_pid: u32,
 }
 
-impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionContext<'a, N, T> {
+impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContext<'a, N, T> {
+    type Listener = T;
+
     #[inline]
     fn write_to_pty<B: Into<Cow<'static, [u8]>>>(&self, val: B) {
         self.notifier.notify(val);
@@ -856,12 +884,18 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
 
     fn spawn_new_instance(&mut self) {
         let mut env_args = env::args();
-        let alacritty = env_args.next().unwrap();
+        let Some(alacritty) = env_args.next() else {
+            error!("Unable to determine Alacritty executable path");
+            return;
+        };
 
         let mut args: Vec<String> = Vec::new();
 
         // Reuse the arguments passed to Alacritty for the new instance.
-        #[allow(clippy::while_let_on_iterator)]
+        #[allow(
+            clippy::while_let_on_iterator,
+            reason = "the iterator is advanced manually inside the loop"
+        )]
         while let Some(arg) = env_args.next() {
             // New instances shouldn't inherit command.
             if arg == "-e" || arg == "--command" {
@@ -908,9 +942,10 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
         S: AsRef<OsStr>,
     {
         #[cfg(not(windows))]
-        let result = spawn_daemon(program, args, self.master_fd, self.shell_pid);
+        let result =
+            spawn_daemon(program, args, self.launch_environment, self.master_fd, self.shell_pid);
         #[cfg(windows)]
-        let result = spawn_daemon(program, args);
+        let result = spawn_daemon(program, args, self.launch_environment);
 
         match result {
             Ok(_) => debug!("Launched {program} with args {args:?}"),
@@ -1068,7 +1103,13 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
             Some(0) => (),
             // When currently in history, replace active regex with history on change.
             Some(index) => {
-                self.search_state.history[0] = self.search_state.history[index].clone();
+                #[allow(
+                    clippy::assigning_clones,
+                    reason = "source and destination share one VecDeque, precluding clone_from"
+                )]
+                {
+                    self.search_state.history[0] = self.search_state.history[index].clone();
+                }
                 self.search_state.history_index = Some(0);
             },
             None => return,
@@ -1217,7 +1258,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
             self.display.window.set_mouse_visible(false);
 
             // Request hint highlights update, since the mouse may have been hovering a hint.
-            self.mouse.hint_highlight_dirty = true
+            self.mouse.hint_highlight_dirty = true;
         }
     }
 
@@ -1530,7 +1571,7 @@ impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
     fn search_reset_state(&mut self) {
         // Unschedule pending timers.
         let timer_id = TimerId::new(Topic::DelayedSearch, self.display.window.id());
-        self.scheduler.unschedule(timer_id);
+        let _ = self.scheduler.unschedule(timer_id);
 
         // Clear focused match.
         self.search_state.focused_match = None;
@@ -1584,7 +1625,7 @@ impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
 
                 // Since we found a result, we require no delayed re-search.
                 let timer_id = TimerId::new(Topic::DelayedSearch, self.display.window.id());
-                self.scheduler.unschedule(timer_id);
+                let _ = self.scheduler.unschedule(timer_id);
             },
             // Reset viewport only when we know there is no match, to prevent unnecessary jumping.
             None if limit.is_none() => self.search_reset_state(),
@@ -1634,8 +1675,8 @@ impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
 
         // Update cursor blinking state.
         let window_id = self.display.window.id();
-        self.scheduler.unschedule(TimerId::new(Topic::BlinkCursor, window_id));
-        self.scheduler.unschedule(TimerId::new(Topic::BlinkTimeout, window_id));
+        let _ = self.scheduler.unschedule(TimerId::new(Topic::BlinkCursor, window_id));
+        let _ = self.scheduler.unschedule(TimerId::new(Topic::BlinkTimeout, window_id));
 
         // Reset blinking timeout.
         *self.cursor_blink_timed_out = false;
@@ -1836,7 +1877,7 @@ pub struct AccumulatedScroll {
     pub y: f64,
 }
 
-impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
+impl input::Processor<ActionContext<'_, Notifier, EventProxy>> {
     /// Handle events from winit.
     pub fn handle_event(&mut self, event: WinitEvent<Event>) {
         match event {
@@ -1854,7 +1895,7 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                 EventType::BlinkCursorTimeout => {
                     // Disable blinking after timeout reached.
                     let timer_id = TimerId::new(Topic::BlinkCursor, self.ctx.display.window.id());
-                    self.ctx.scheduler.unschedule(timer_id);
+                    let _ = self.ctx.scheduler.unschedule(timer_id);
                     *self.ctx.cursor_blink_timed_out = true;
                     self.ctx.display.cursor_hidden = false;
                     *self.ctx.dirty = true;
@@ -1884,19 +1925,18 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                         }
 
                         // Ring visual bell.
-                        self.ctx.display.visual_bell.ring();
+                        let _ = self.ctx.display.visual_bell.ring();
 
                         // Execute bell command.
-                        if let Some(bell_command) = &self.ctx.config.bell.command {
-                            if self
+                        if let Some(bell_command) = &self.ctx.config.bell.command
+                            && self
                                 .ctx
                                 .prev_bell_cmd
                                 .is_none_or(|i| i.elapsed() >= BELL_CMD_COOLDOWN)
-                            {
-                                self.ctx.spawn_daemon(bell_command.program(), bell_command.args());
+                        {
+                            self.ctx.spawn_daemon(bell_command.program(), bell_command.args());
 
-                                *self.ctx.prev_bell_cmd = Some(Instant::now());
-                            }
+                            *self.ctx.prev_bell_cmd = Some(Instant::now());
                         }
                     },
                     TerminalEvent::ClipboardStore(clipboard_type, content) => {

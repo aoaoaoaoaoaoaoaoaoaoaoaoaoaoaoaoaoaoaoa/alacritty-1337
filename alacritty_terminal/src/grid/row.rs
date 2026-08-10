@@ -2,7 +2,7 @@
 
 use std::cmp::{max, min};
 use std::ops::{Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo, RangeToInclusive};
-use std::{ptr, slice};
+use std::slice;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -35,23 +35,10 @@ impl<T: Default> Row<T> {
     ///
     /// Ideally the `template` should be `Copy` in all performance sensitive scenarios.
     pub fn new(columns: usize) -> Row<T> {
-        debug_assert!(columns >= 1);
+        assert!(columns > 0, "terminal rows require at least one column");
 
-        let mut inner: Vec<T> = Vec::with_capacity(columns);
-
-        // This is a slightly optimized version of `std::vec::Vec::resize`.
-        unsafe {
-            let mut ptr = inner.as_mut_ptr();
-
-            for _ in 1..columns {
-                ptr::write(ptr, T::default());
-                ptr = ptr.offset(1);
-            }
-            ptr::write(ptr, T::default());
-
-            inner.set_len(columns);
-        }
-
+        let mut inner = Vec::with_capacity(columns);
+        inner.resize_with(columns, T::default);
         Row { inner, occ: 0 }
     }
 
@@ -110,7 +97,6 @@ impl<T: Default> Row<T> {
     }
 }
 
-#[allow(clippy::len_without_is_empty)]
 impl<T> Row<T> {
     #[inline]
     pub fn from_vec(vec: Vec<T>, occ: usize) -> Row<T> {
@@ -120,6 +106,22 @@ impl<T> Row<T> {
     #[inline]
     pub fn len(&self) -> usize {
         self.inner.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    #[inline]
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        self.inner.iter()
+    }
+
+    #[inline]
+    pub fn iter_mut(&mut self) -> slice::IterMut<'_, T> {
+        self.occ = self.inner.len();
+        self.inner.iter_mut()
     }
 
     #[inline]
@@ -175,7 +177,7 @@ impl<'a, T> IntoIterator for &'a Row<T> {
 
     #[inline]
     fn into_iter(self) -> slice::Iter<'a, T> {
-        self.inner.iter()
+        self.iter()
     }
 }
 
@@ -185,8 +187,7 @@ impl<'a, T> IntoIterator for &'a mut Row<T> {
 
     #[inline]
     fn into_iter(self) -> slice::IterMut<'a, T> {
-        self.occ = self.len();
-        self.inner.iter_mut()
+        self.iter_mut()
     }
 }
 
@@ -289,5 +290,16 @@ impl<T> IndexMut<RangeToInclusive<Column>> for Row<T> {
     fn index_mut(&mut self, index: RangeToInclusive<Column>) -> &mut [T] {
         self.occ = max(self.occ, *index.end + 1);
         &mut self.inner[..=(index.end.0)]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Row;
+
+    #[test]
+    #[should_panic(expected = "terminal rows require at least one column")]
+    fn zero_columns_are_rejected() {
+        let _ = Row::<u8>::new(0);
     }
 }

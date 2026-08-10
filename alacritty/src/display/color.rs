@@ -62,29 +62,26 @@ impl List {
         // Dims.
         self[NamedColor::DimForeground] =
             colors.primary.dim_foreground.unwrap_or(colors.primary.foreground * DIM_FACTOR);
-        match colors.dim {
-            Some(ref dim) => {
-                trace!("Using config-provided dim colors");
-                self[NamedColor::DimBlack] = dim.black;
-                self[NamedColor::DimRed] = dim.red;
-                self[NamedColor::DimGreen] = dim.green;
-                self[NamedColor::DimYellow] = dim.yellow;
-                self[NamedColor::DimBlue] = dim.blue;
-                self[NamedColor::DimMagenta] = dim.magenta;
-                self[NamedColor::DimCyan] = dim.cyan;
-                self[NamedColor::DimWhite] = dim.white;
-            },
-            None => {
-                trace!("Deriving dim colors from normal colors");
-                self[NamedColor::DimBlack] = colors.normal.black * DIM_FACTOR;
-                self[NamedColor::DimRed] = colors.normal.red * DIM_FACTOR;
-                self[NamedColor::DimGreen] = colors.normal.green * DIM_FACTOR;
-                self[NamedColor::DimYellow] = colors.normal.yellow * DIM_FACTOR;
-                self[NamedColor::DimBlue] = colors.normal.blue * DIM_FACTOR;
-                self[NamedColor::DimMagenta] = colors.normal.magenta * DIM_FACTOR;
-                self[NamedColor::DimCyan] = colors.normal.cyan * DIM_FACTOR;
-                self[NamedColor::DimWhite] = colors.normal.white * DIM_FACTOR;
-            },
+        if let Some(ref dim) = colors.dim {
+            trace!("Using config-provided dim colors");
+            self[NamedColor::DimBlack] = dim.black;
+            self[NamedColor::DimRed] = dim.red;
+            self[NamedColor::DimGreen] = dim.green;
+            self[NamedColor::DimYellow] = dim.yellow;
+            self[NamedColor::DimBlue] = dim.blue;
+            self[NamedColor::DimMagenta] = dim.magenta;
+            self[NamedColor::DimCyan] = dim.cyan;
+            self[NamedColor::DimWhite] = dim.white;
+        } else {
+            trace!("Deriving dim colors from normal colors");
+            self[NamedColor::DimBlack] = colors.normal.black * DIM_FACTOR;
+            self[NamedColor::DimRed] = colors.normal.red * DIM_FACTOR;
+            self[NamedColor::DimGreen] = colors.normal.green * DIM_FACTOR;
+            self[NamedColor::DimYellow] = colors.normal.yellow * DIM_FACTOR;
+            self[NamedColor::DimBlue] = colors.normal.blue * DIM_FACTOR;
+            self[NamedColor::DimMagenta] = colors.normal.magenta * DIM_FACTOR;
+            self[NamedColor::DimCyan] = colors.normal.cyan * DIM_FACTOR;
+            self[NamedColor::DimWhite] = colors.normal.white * DIM_FACTOR;
         }
     }
 
@@ -111,7 +108,7 @@ impl List {
             }
         }
 
-        debug_assert!(index == 232);
+        debug_assert_eq!(index, 232);
     }
 
     pub fn fill_gray_ramp(&mut self, colors: &Colors) {
@@ -135,7 +132,7 @@ impl List {
             index += 1;
         }
 
-        debug_assert!(index == 256);
+        debug_assert_eq!(index, 256);
     }
 }
 
@@ -275,7 +272,7 @@ impl Serialize for Rgb {
 }
 
 impl Display for Rgb {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
     }
 }

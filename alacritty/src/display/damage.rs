@@ -115,21 +115,21 @@ impl DamageTracker {
         }
 
         for selection in self.old_selection.into_iter().chain(selection) {
-            let display_offset = display_offset as i32;
+            let display_offset = i32::try_from(display_offset).unwrap_or(i32::MAX);
             let last_visible_line = self.screen_lines as i32 - 1;
             let columns = self.columns;
+            let viewport_start = -display_offset;
+            let viewport_end = viewport_start.saturating_add(last_visible_line);
 
             // Ignore invisible selection.
-            if selection.end.line.0 + display_offset < 0
-                || selection.start.line.0.abs() < display_offset - last_visible_line
-            {
+            if selection.end.line.0 < viewport_start || selection.start.line.0 > viewport_end {
                 continue;
-            };
+            }
 
-            let start = cmp::max(selection.start.line.0 + display_offset, 0) as usize;
-            let end = (selection.end.line.0 + display_offset).clamp(0, last_visible_line) as usize;
+            let start = selection.start.line.0.clamp(viewport_start, viewport_end) - viewport_start;
+            let end = selection.end.line.0.clamp(viewport_start, viewport_end) - viewport_start;
             for line in start..=end {
-                self.frame().lines[line].expand(0, columns - 1);
+                self.frame().lines[line as usize].expand(0, columns - 1);
             }
         }
     }
@@ -192,13 +192,24 @@ impl FrameDamage {
 
     /// Check if a range is damaged.
     #[inline]
-    pub fn intersects(&self, start: Point<usize>, end: Point<usize>) -> bool {
-        let start_line = &self.lines[start.line];
-        let end_line = &self.lines[end.line];
-        self.full
-            || (start_line.left..=start_line.right).contains(&start.column)
-            || (end_line.left..=end_line.right).contains(&end.column)
-            || (start.line + 1..end.line).any(|line| self.lines[line].is_damaged())
+    pub fn intersects(&self, mut start: Point<usize>, mut end: Point<usize>) -> bool {
+        if self.full {
+            return true;
+        }
+        if start > end {
+            mem::swap(&mut start, &mut end);
+        }
+
+        (start.line..=end.line).any(|line| {
+            let damage = &self.lines[line];
+            if !damage.is_damaged() {
+                return false;
+            }
+
+            let left = if line == start.line { start.column.0 } else { 0 };
+            let right = if line == end.line { end.column.0 } else { usize::MAX };
+            damage.left <= right && left <= damage.right
+        })
     }
 }
 
@@ -375,13 +386,27 @@ mod tests {
         let width = 10;
         let size_info = SizeInfo::new(viewport_height, viewport_height, 5., 5., 0., 0., true);
         frame_damage.add_viewport_rect(&size_info, x, y, width, height);
-        assert_eq!(frame_damage.rects[0], Rect {
-            x,
-            y: viewport_height as i32 - y - height,
-            width,
-            height
-        });
+        assert_eq!(
+            frame_damage.rects[0],
+            Rect { x, y: viewport_height as i32 - y - height, width, height }
+        );
         assert_eq!(frame_damage.rects[0].y, viewport_y_to_damage_y(&size_info, y, height));
         assert_eq!(damage_y_to_viewport_y(&size_info, &frame_damage.rects[0]), y);
+    }
+
+    #[test]
+    fn range_intersects_damage_strictly_inside_it() {
+        let mut damage = FrameDamage::default();
+        damage.reset(2, 10);
+        damage.damage_point(Point::new(0, alacritty_terminal::index::Column(5)));
+
+        assert!(damage.intersects(
+            Point::new(0, alacritty_terminal::index::Column(2)),
+            Point::new(0, alacritty_terminal::index::Column(8)),
+        ));
+        assert!(!damage.intersects(
+            Point::new(0, alacritty_terminal::index::Column(6)),
+            Point::new(0, alacritty_terminal::index::Column(8)),
+        ));
     }
 }

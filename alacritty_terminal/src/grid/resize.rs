@@ -138,7 +138,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
             if last_len >= 1
                 && last_row[Column(last_len - 1)].flags().contains(Flags::LEADING_WIDE_CHAR_SPACER)
             {
-                last_row.shrink(last_len - 1);
+                let _ = last_row.shrink(last_len - 1);
                 last_len -= 1;
             }
 
@@ -304,11 +304,10 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                         row[Column(columns - 1)].flags_mut().insert(Flags::WRAPLINE);
                         new_raw.push(row);
                         break;
-                    } else {
-                        // Remove the leading spacer from the end of the wrapped row.
-                        wrapped[len - 2].flags_mut().insert(Flags::WRAPLINE);
-                        wrapped.truncate(len - 1);
                     }
+                    // Remove the leading spacer from the end of the wrapped row.
+                    wrapped[len - 2].flags_mut().insert(Flags::WRAPLINE);
+                    wrapped.truncate(len - 1);
                 }
 
                 new_raw.push(row);
@@ -332,33 +331,33 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                     // Add removed cells to start of next row.
                     buffered = Some(wrapped);
                     break;
-                } else {
-                    // Reflow cursor if a line below it is deleted.
-                    let cursor_buffer_line = self.lines - self.cursor.point.line.0 as usize - 1;
-                    if (i == cursor_buffer_line && self.cursor.point.column < columns)
-                        || i < cursor_buffer_line
-                    {
-                        self.cursor.point.line = max(self.cursor.point.line - 1, Line(0));
-                    }
+                }
 
-                    // Reflow the cursor if it is on this line beyond the width.
-                    if i == cursor_buffer_line && self.cursor.point.column >= columns {
-                        // Since only a single new line is created, we subtract only `columns`
-                        // from the cursor instead of reflowing it completely.
-                        self.cursor.point.column -= columns;
-                    }
+                // Reflow cursor if a line below it is deleted.
+                let cursor_buffer_line = self.lines - self.cursor.point.line.0 as usize - 1;
+                if (i == cursor_buffer_line && self.cursor.point.column < columns)
+                    || i < cursor_buffer_line
+                {
+                    self.cursor.point.line = max(self.cursor.point.line - 1, Line(0));
+                }
 
-                    // Make sure new row is at least as long as new width.
-                    let occ = wrapped.len();
-                    if occ < columns {
-                        wrapped.resize_with(columns, T::default);
-                    }
-                    row = Row::from_vec(wrapped, occ);
+                // Reflow the cursor if it is on this line beyond the width.
+                if i == cursor_buffer_line && self.cursor.point.column >= columns {
+                    // Since only a single new line is created, we subtract only `columns`
+                    // from the cursor instead of reflowing it completely.
+                    self.cursor.point.column -= columns;
+                }
 
-                    if i < self.display_offset {
-                        // Since we added a new line, rotate up the viewport.
-                        self.display_offset += 1;
-                    }
+                // Make sure new row is at least as long as new width.
+                let occ = wrapped.len();
+                if occ < columns {
+                    wrapped.resize_with(columns, T::default);
+                }
+                row = Row::from_vec(wrapped, occ);
+
+                if i < self.display_offset {
+                    // Since we added a new line, rotate up the viewport.
+                    self.display_offset += 1;
                 }
             }
         }

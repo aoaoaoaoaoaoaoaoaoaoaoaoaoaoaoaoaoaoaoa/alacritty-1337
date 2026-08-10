@@ -74,7 +74,7 @@ impl RegexSearch {
         let right_rdfa =
             LazyDfa::new(search, config, syntax_config, thompson_config, Direction::Left, true)?;
 
-        Ok(RegexSearch { left_fdfa, left_rdfa, right_fdfa, right_rdfa })
+        Ok(RegexSearch { left_fdfa, left_rdfa, right_rdfa, right_fdfa })
     }
 }
 
@@ -112,7 +112,7 @@ impl LazyDfa {
 
         let cache = dfa.create_cache();
 
-        Ok(Self { direction, cache, dfa, match_all })
+        Ok(Self { dfa, cache, direction, match_all })
     }
 }
 
@@ -290,7 +290,7 @@ impl<T> Term<T> {
         // Get start state for the DFA.
         let regex_anchored = if regex.match_all { Anchored::Yes } else { Anchored::No };
         let input = Input::new(&[]).anchored(regex_anchored);
-        let mut state = regex.dfa.start_state_forward(&mut regex.cache, &input).unwrap();
+        let mut state = regex.dfa.start_state_forward(&mut regex.cache, &input)?;
 
         let mut iter = self.grid.iter_from(start);
         let mut regex_match = None;
@@ -385,15 +385,14 @@ impl<T> Term<T> {
             }
 
             // Advance grid cell iterator.
-            let mut cell = match next(&mut iter) {
-                Some(Indexed { cell, .. }) => cell,
-                None => {
-                    // Wrap around to other end of the scrollback buffer.
-                    let line = topmost_line - point.line + screen_lines - 1;
-                    let start = Point::new(line, last_column - point.column);
-                    iter = self.grid.iter_from(start);
-                    iter.cell()
-                },
+            let mut cell = if let Some(Indexed { cell, .. }) = next(&mut iter) {
+                cell
+            } else {
+                // Wrap around to other end of the scrollback buffer.
+                let line = topmost_line - point.line + screen_lines - 1;
+                let start = Point::new(line, last_column - point.column);
+                iter = self.grid.iter_from(start);
+                iter.cell()
             };
 
             // Check for completion before potentially skipping over fullwidth characters.
@@ -446,13 +445,13 @@ impl<T> Term<T> {
                 if cell.flags.contains(Flags::WIDE_CHAR)
                     && iter.point().column < self.last_column() =>
             {
-                iter.next();
+                let _ = iter.next();
             },
             Direction::Right if cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) => {
                 if let Some(Indexed { cell: new_cell, .. }) = iter.next() {
                     *cell = new_cell;
                 }
-                iter.next();
+                let _ = iter.next();
             },
             Direction::Left if cell.flags.contains(Flags::WIDE_CHAR_SPACER) => {
                 if let Some(Indexed { cell: new_cell, .. }) = iter.prev() {
@@ -461,7 +460,7 @@ impl<T> Term<T> {
 
                 let prev = iter.point().sub(self, Boundary::Grid, 1);
                 if self.grid[prev].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
-                    iter.prev();
+                    let _ = iter.prev();
                 }
             },
             _ => (),
@@ -671,7 +670,10 @@ impl<T> Iterator for RegexIter<'_, T> {
 
         let regex_match = self.next_match()?;
 
-        self.point = *regex_match.end();
+        self.point = match self.direction {
+            Direction::Right => *regex_match.end(),
+            Direction::Left => *regex_match.start(),
+        };
         if self.point == self.end {
             // Stop when the match terminates right on the end limit.
             self.done = true;
@@ -1075,6 +1077,25 @@ mod tests {
         let end = Point::new(Line(0), Column(1));
 
         let mut iter = RegexIter::new(start, end, Direction::Right, &term, &mut regex);
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn regex_iter_left_advances_before_match() {
+        let term = mock_term("aba aba");
+        let mut regex = RegexSearch::new("aba").unwrap();
+        let start = Point::new(Line(0), Column(6));
+        let end = Point::new(Line(0), Column(0));
+        let mut iter = RegexIter::new(start, end, Direction::Left, &term, &mut regex);
+
+        assert_eq!(
+            iter.next(),
+            Some(Point::new(Line(0), Column(4))..=Point::new(Line(0), Column(6)))
+        );
+        assert_eq!(
+            iter.next(),
+            Some(Point::new(Line(0), Column(0))..=Point::new(Line(0), Column(2)))
+        );
         assert_eq!(iter.next(), None);
     }
 

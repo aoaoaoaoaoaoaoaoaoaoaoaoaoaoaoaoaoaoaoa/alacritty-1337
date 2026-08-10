@@ -1,0 +1,75 @@
+# Maintainer: aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa
+
+pkgname=alacritty-1337
+pkgver=0.18.0_dev
+pkgrel=1
+pkgdesc="alacritty but it doesn't suck"
+arch=('x86_64')
+url='https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337'
+license=('Apache-2.0' 'MIT')
+provides=("alacritty=$pkgver")
+conflicts=('alacritty')
+replaces=('alacritty')
+depends=('freetype2' 'fontconfig' 'libxi' 'libxcursor' 'libxkbcommon' 'libxkbcommon-x11' 'libxrandr')
+makedepends=('cargo' 'cmake' 'desktop-file-utils' 'gdb' 'git' 'libxcb' 'rust' 'scdoc')
+checkdepends=('ttf-dejavu')
+optdepends=('ncurses: for the alacritty terminfo database')
+options=('!debug' '!lto')
+source=("$pkgname::git+$url.git#branch=master")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$pkgname"
+  printf '0.18.0_dev.r%s.g%s' \
+    "$(git rev-list --count v0.17.0..HEAD)" \
+    "$(git rev-parse --short=12 HEAD)"
+}
+
+prepare() {
+  cd "$pkgname"
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
+}
+
+build() {
+  cd "$pkgname"
+  CARGO_INCREMENTAL=0 RUSTFLAGS='-C target-cpu=native' \
+    cargo build --frozen --profile release-native -p alacritty --bin alacritty
+}
+
+check() {
+  cd "$pkgname"
+  CARGO_INCREMENTAL=0 cargo test --frozen --workspace --all-targets --all-features
+}
+
+package() {
+  cd "$pkgname"
+
+  local target_dir
+  target_dir=$(cargo metadata --no-deps --format-version 1 \
+    | sed -E 's/.*"target_directory":"([^"]+)".*/\1/')
+
+  install -Dm755 "$target_dir/release-native/alacritty" "$pkgdir/usr/bin/alacritty"
+  desktop-file-install -m 644 --dir "$pkgdir/usr/share/applications" \
+    extra/linux/Alacritty.desktop
+  install -Dm644 extra/linux/org.alacritty.Alacritty.appdata.xml \
+    "$pkgdir/usr/share/metainfo/org.alacritty.Alacritty.appdata.xml"
+  install -Dm644 extra/logo/compat/alacritty-term.svg \
+    "$pkgdir/usr/share/pixmaps/Alacritty.svg"
+  install -Dm644 extra/completions/alacritty.bash \
+    "$pkgdir/usr/share/bash-completion/completions/alacritty"
+  install -Dm644 extra/completions/alacritty.fish \
+    "$pkgdir/usr/share/fish/vendor_completions.d/alacritty.fish"
+  install -Dm644 extra/completions/_alacritty \
+    "$pkgdir/usr/share/zsh/site-functions/_alacritty"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+
+  local page section
+  for page in alacritty.1 alacritty-msg.1 alacritty.5 alacritty-bindings.5 alacritty-escapes.7; do
+    section=${page##*.}
+    install -d "$pkgdir/usr/share/man/man$section"
+    scdoc < "extra/man/$page.scd" | gzip -9n \
+      > "$pkgdir/usr/share/man/man$section/$page.gz"
+    chmod 644 "$pkgdir/usr/share/man/man$section/$page.gz"
+  done
+}

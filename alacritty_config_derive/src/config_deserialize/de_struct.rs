@@ -2,10 +2,9 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
-use syn::spanned::Spanned;
 use syn::{Error, Field, Generics, Ident, Type};
 
-use crate::{Attr, GenericsStreams, MULTIPLE_FLATTEN_ERROR, serde_replace};
+use crate::{ConfigAttrs, GenericsStreams, MULTIPLE_FLATTEN_ERROR, serde_replace};
 
 /// Use this crate's name as log target.
 const LOG_TARGET: &str = env!("CARGO_PKG_NAME");
@@ -93,7 +92,7 @@ fn fields_deserializer<T>(fields: &Punctuated<Field, T>) -> FieldStreams {
     let mut field_streams = FieldStreams::default();
 
     // Create the deserialization stream for each field.
-    for field in fields.iter() {
+    for field in fields {
         if let Err(err) = field_deserializer(&mut field_streams, field) {
             field_streams.flatten = err.to_compile_error();
             return field_streams;
@@ -105,9 +104,16 @@ fn fields_deserializer<T>(fields: &Punctuated<Field, T>) -> FieldStreams {
 
 /// Append a single field deserializer to the stream.
 fn field_deserializer(field_streams: &mut FieldStreams, field: &Field) -> Result<(), Error> {
-    let ident = field.ident.as_ref().expect("unreachable tuple struct");
+    let Some(ident) = field.ident.as_ref() else {
+        return Err(Error::new_spanned(field, "ConfigDeserialize requires named fields"));
+    };
     let literal = ident.to_string();
     let mut literals = vec![literal.clone()];
+    let attributes = ConfigAttrs::parse(&field.attrs)?;
+
+    if attributes.skip {
+        return Ok(());
+    }
 
     // Create default stream for deserializing fields.
     let mut match_assignment_stream = quote! {
@@ -124,65 +130,44 @@ fn field_deserializer(field_streams: &mut FieldStreams, field: &Field) -> Result
         }
     };
 
-    // Iterate over all #[config(...)] attributes.
-    for attr in field.attrs.iter().filter(|attr| attr.path().is_ident("config")) {
-        let parsed = match attr.parse_args::<Attr>() {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-
-        match parsed.ident.as_str() {
-            // Skip deserialization for `#[config(skip)]` fields.
-            "skip" => return Ok(()),
-            "flatten" => {
-                // NOTE: Currently only a single instance of flatten is supported per struct
-                // for complexity reasons.
-                if !field_streams.flatten.is_empty() {
-                    return Err(Error::new(attr.span(), MULTIPLE_FLATTEN_ERROR));
-                }
-
-                // Create the tokens to deserialize the flattened struct from the unused fields.
-                field_streams.flatten.extend(quote! {
-                    // Drain unused fields since they will be used for flattening.
-                    let flattened = std::mem::replace(&mut unused, toml::Table::new());
-
-                    config.#ident = serde::Deserialize::deserialize(flattened).unwrap_or_default();
-                });
-            },
-            "deprecated" | "removed" => {
-                // Construct deprecation/removal message with optional attribute override.
-                let mut message = format!("Config warning: {} has been {}", literal, parsed.ident);
-                if let Some(warning) = parsed.param {
-                    message = format!("{}; {}", message, warning.value());
-                }
-                message.push_str("\nUse `alacritty migrate` to automatically resolve it");
-
-                // Append stream to log deprecation/removal warning.
-                match_assignment_stream.extend(quote! {
-                    log::warn!(target: #LOG_TARGET, #message);
-                });
-            },
-            // Add aliases to match pattern.
-            "alias" => {
-                if let Some(alias) = parsed.param {
-                    literals.push(alias.value());
-                }
-            },
-            _ => (),
+    if attributes.flatten {
+        // NOTE: Currently only a single instance of flatten is supported per struct.
+        if !field_streams.flatten.is_empty() {
+            return Err(Error::new(ident.span(), MULTIPLE_FLATTEN_ERROR));
         }
+
+        field_streams.flatten.extend(quote! {
+            let flattened = std::mem::take(&mut unused);
+            config.#ident = serde::Deserialize::deserialize(flattened).unwrap_or_default();
+        });
+    }
+
+    if let Some(warning) = attributes.warning {
+        let mut message = format!("Config warning: {} has been {}", literal, warning.kind);
+        if let Some(warning) = warning.message {
+            message = format!("{}; {}", message, warning.value());
+        }
+        message.push_str("\nUse `alacritty migrate` to automatically resolve it");
+        match_assignment_stream.extend(quote! {
+            log::warn!(target: #LOG_TARGET, #message);
+        });
+    }
+
+    for alias in attributes.aliases {
+        literals.push(alias.value());
     }
 
     // Create token stream for deserializing "none" string into `Option<T>`.
-    if let Type::Path(type_path) = &field.ty {
-        if type_path.path.segments.iter().next_back().is_some_and(|s| s.ident == "Option") {
-            match_assignment_stream = quote! {
-                if value.as_str().is_some_and(|s| s.eq_ignore_ascii_case("none")) {
-                    config.#ident = None;
-                    continue;
-                }
-                #match_assignment_stream
-            };
-        }
+    if let Type::Path(type_path) = &field.ty
+        && type_path.path.segments.iter().next_back().is_some_and(|s| s.ident == "Option")
+    {
+        match_assignment_stream = quote! {
+            if value.as_str().is_some_and(|s| s.eq_ignore_ascii_case("none")) {
+                config.#ident = None;
+                continue;
+            }
+            #match_assignment_stream
+        };
     }
 
     // Create the token stream for deserialization and error handling.

@@ -1,6 +1,5 @@
 use std::cmp::max;
 use std::mem;
-use std::mem::MaybeUninit;
 use std::ops::{Index, IndexMut};
 
 #[cfg(feature = "serde")]
@@ -54,11 +53,12 @@ pub struct Storage<T> {
 
 impl<T: PartialEq> PartialEq for Storage<T> {
     fn eq(&self, other: &Self) -> bool {
-        // Both storage buffers need to be truncated and zeroed.
-        assert_eq!(self.zero, 0);
-        assert_eq!(other.zero, 0);
-
-        self.inner == other.inner && self.len == other.len
+        self.len == other.len
+            && (0..self.len).all(|offset| {
+                let self_line = Line(self.visible_lines as i32 - offset as i32 - 1);
+                let other_line = Line(other.visible_lines as i32 - offset as i32 - 1);
+                self[self_line] == other[other_line]
+            })
     }
 }
 
@@ -142,37 +142,11 @@ impl<T> Storage<T> {
         self.len
     }
 
-    /// Swap implementation for Row<T>.
-    ///
-    /// Exploits the known size of Row<T> to produce a slightly more efficient
-    /// swap than going through slice::swap.
-    ///
-    /// The default implementation from swap generates 8 movups and 4 movaps
-    /// instructions. This implementation achieves the swap in only 8 movups
-    /// instructions.
+    /// Swap two logical rows.
     pub fn swap(&mut self, a: Line, b: Line) {
-        debug_assert_eq!(mem::size_of::<Row<T>>(), mem::size_of::<usize>() * 4);
-
         let a = self.compute_index(a);
         let b = self.compute_index(b);
-
-        unsafe {
-            // Cast to a qword array to opt out of copy restrictions and avoid
-            // drop hazards. Byte array is no good here since for whatever
-            // reason LLVM won't optimized it.
-            let a_ptr = self.inner.as_mut_ptr().add(a) as *mut MaybeUninit<usize>;
-            let b_ptr = self.inner.as_mut_ptr().add(b) as *mut MaybeUninit<usize>;
-
-            // Copy 1 qword at a time.
-            //
-            // The optimizer unrolls this loop and vectorizes it.
-            let mut tmp: MaybeUninit<usize>;
-            for i in 0..4 {
-                tmp = *a_ptr.offset(i);
-                *a_ptr.offset(i) = *b_ptr.offset(i);
-                *b_ptr.offset(i) = tmp;
-            }
-        }
+        self.inner.swap(a, b);
     }
 
     /// Rotate the grid, moving all lines up/down in history.
@@ -315,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "positive < self.len")]
     #[cfg(debug_assertions)]
     fn indexing_above_inner_len() {
         let storage = Storage::<char>::with_capacity(1, 1);
@@ -345,7 +319,7 @@ mod tests {
     ///   2: -
     ///   3: \0
     ///   ...
-    ///   MAX_CACHE_SIZE: \0
+    ///   `MAX_CACHE_SIZE`: \0
     #[test]
     fn grow_after_zero() {
         // Setup storage area.
@@ -386,7 +360,7 @@ mod tests {
     ///   2: -
     ///   3: \0
     ///   ...
-    ///   MAX_CACHE_SIZE: \0
+    ///   `MAX_CACHE_SIZE`: \0
     #[test]
     fn grow_before_zero() {
         // Setup storage area.
@@ -759,6 +733,24 @@ mod tests {
         storage.rotate(2);
 
         assert!(storage.zero < storage.inner.len());
+    }
+
+    #[test]
+    fn equality_uses_logical_row_order() {
+        let linear = Storage {
+            inner: vec![filled_row('0'), filled_row('1'), filled_row('2')],
+            zero: 0,
+            visible_lines: 3,
+            len: 3,
+        };
+        let rotated = Storage {
+            inner: vec![filled_row('2'), filled_row('0'), filled_row('1')],
+            zero: 1,
+            visible_lines: 3,
+            len: 3,
+        };
+
+        assert_eq!(linear, rotated);
     }
 
     fn filled_row(content: char) -> Row<char> {

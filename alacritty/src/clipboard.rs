@@ -34,19 +34,36 @@ impl Clipboard {
     /// Used for tests, to handle missing clipboard provider when built without the `x11`
     /// feature, and as default clipboard value.
     pub fn new_nop() -> Self {
-        Self { clipboard: Box::new(NopClipboardContext::new().unwrap()), selection: None }
+        Self { clipboard: Box::new(NopClipboardContext), selection: None }
     }
 }
 
 impl Default for Clipboard {
     fn default() -> Self {
         #[cfg(any(target_os = "macos", windows))]
-        return Self { clipboard: Box::new(ClipboardContext::new().unwrap()), selection: None };
+        return match ClipboardContext::new() {
+            Ok(clipboard) => Self { clipboard: Box::new(clipboard), selection: None },
+            Err(err) => {
+                warn!("Unable to initialize clipboard: {err}");
+                Self::new_nop()
+            },
+        };
 
         #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-        return Self {
-            clipboard: Box::new(ClipboardContext::new().unwrap()),
-            selection: Some(Box::new(X11ClipboardContext::<X11SelectionClipboard>::new().unwrap())),
+        return match (ClipboardContext::new(), X11ClipboardContext::<X11SelectionClipboard>::new())
+        {
+            (Ok(clipboard), Ok(selection)) => {
+                Self { clipboard: Box::new(clipboard), selection: Some(Box::new(selection)) }
+            },
+            (clipboard, selection) => {
+                if let Err(err) = clipboard {
+                    warn!("Unable to initialize X11 clipboard: {err}");
+                }
+                if let Err(err) = selection {
+                    warn!("Unable to initialize X11 selection: {err}");
+                }
+                Self::new_nop()
+            },
         };
 
         #[cfg(not(any(feature = "x11", target_os = "macos", windows)))]

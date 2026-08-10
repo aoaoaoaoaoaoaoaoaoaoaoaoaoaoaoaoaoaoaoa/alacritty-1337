@@ -27,7 +27,7 @@ pub struct WindowConfig {
     /// Startup mode.
     pub startup_mode: StartupMode,
 
-    /// XEmbed parent.
+    /// `XEmbed` parent.
     #[config(skip)]
     #[serde(skip_serializing)]
     pub embed: Option<u32>,
@@ -252,7 +252,7 @@ impl<'de> Deserialize<'de> for Class {
                             Err(err) => {
                                 error!(
                                     target: LOG_TARGET_CONFIG,
-                                    "Config error: class.instance: {err}"
+                                    "Config error: class.general: {err}"
                                 );
                             },
                         },

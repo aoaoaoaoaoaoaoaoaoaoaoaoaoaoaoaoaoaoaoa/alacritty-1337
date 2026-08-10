@@ -1,5 +1,6 @@
 //! Terminal window context.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
@@ -67,6 +68,8 @@ pub struct WindowContext {
     shell_pid: u32,
     window_config: ParsedOptions,
     config: Rc<UiConfig>,
+    runtime_environment: Rc<HashMap<String, String>>,
+    launch_environment: HashMap<String, String>,
 }
 
 impl WindowContext {
@@ -75,9 +78,10 @@ impl WindowContext {
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
         config: Rc<UiConfig>,
+        runtime_environment: Rc<HashMap<String, String>>,
         mut options: WindowOptions,
     ) -> Result<Self, Box<dyn Error>> {
-        let raw_display_handle = event_loop.display_handle().unwrap().as_raw();
+        let raw_display_handle = event_loop.display_handle()?.as_raw();
 
         let mut identity = config.window.identity.clone();
         options.window_identity.override_identity_config(&mut identity);
@@ -115,7 +119,7 @@ impl WindowContext {
 
         let display = Display::new(window, gl_context, &config, false)?;
 
-        Self::new(display, config, options, proxy)
+        Self::new(display, config, runtime_environment, options, proxy)
     }
 
     /// Create additional context with the graphics platform other windows are using.
@@ -124,6 +128,7 @@ impl WindowContext {
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
         config: Rc<UiConfig>,
+        runtime_environment: Rc<HashMap<String, String>>,
         mut options: WindowOptions,
         config_overrides: ParsedOptions,
     ) -> Result<Self, Box<dyn Error>> {
@@ -155,7 +160,7 @@ impl WindowContext {
 
         let display = Display::new(window, gl_context, &config, tabbed)?;
 
-        let mut window_context = Self::new(display, config, options, proxy)?;
+        let mut window_context = Self::new(display, config, runtime_environment, options, proxy)?;
 
         // Set the config overrides at startup.
         //
@@ -169,11 +174,14 @@ impl WindowContext {
     fn new(
         display: Display,
         config: Rc<UiConfig>,
+        runtime_environment: Rc<HashMap<String, String>>,
         options: WindowOptions,
         proxy: EventLoopProxy<Event>,
     ) -> Result<Self, Box<dyn Error>> {
         let mut pty_config = config.pty_config();
         options.terminal_options.override_pty_config(&mut pty_config);
+        let launch_environment = tty::shell_environment(&pty_config.env, &runtime_environment);
+        pty_config.env.clone_from(&launch_environment);
 
         let preserve_title = options.window_identity.title.is_some();
 
@@ -241,6 +249,8 @@ impl WindowContext {
             #[cfg(not(windows))]
             shell_pid,
             config,
+            runtime_environment,
+            launch_environment,
             notifier: Notifier(loop_tx),
             cursor_blink_timed_out: Default::default(),
             prev_bell_cmd: Default::default(),
@@ -263,6 +273,8 @@ impl WindowContext {
 
         // Apply ipc config if there are overrides.
         self.config = self.window_config.override_config_rc(self.config.clone());
+        self.launch_environment =
+            tty::shell_environment(&self.config.env, &self.runtime_environment);
 
         self.display.update_config(&self.config);
         self.terminal.lock().set_options(self.config.term_options());
@@ -446,6 +458,7 @@ impl WindowContext {
             shell_pid: self.shell_pid,
             preserve_title: self.preserve_title,
             config: &self.config,
+            launch_environment: &self.launch_environment,
             event_proxy,
             #[cfg(target_os = "macos")]
             event_loop,
@@ -499,31 +512,28 @@ impl WindowContext {
     }
 
     /// Write the ref test results to the disk.
-    pub fn write_ref_test_results(&self) {
+    pub fn write_ref_test_results(&self) -> Result<(), Box<dyn Error>> {
         // Dump grid state.
         let mut grid = self.terminal.lock().grid().clone();
         grid.initialize_all();
         grid.truncate();
 
-        let serialized_grid = json::to_string(&grid).expect("serialize grid");
+        let serialized_grid = json::to_string(&grid)?;
 
         let size_info = &self.display.size_info;
         let size = TermSize::new(size_info.columns(), size_info.screen_lines());
-        let serialized_size = json::to_string(&size).expect("serialize size");
+        let serialized_size = json::to_string(&size)?;
 
         let serialized_config = format!("{{\"history_size\":{}}}", grid.history_size());
 
-        File::create("./grid.json")
-            .and_then(|mut f| f.write_all(serialized_grid.as_bytes()))
-            .expect("write grid.json");
+        File::create("./grid.json").and_then(|mut f| f.write_all(serialized_grid.as_bytes()))?;
 
-        File::create("./size.json")
-            .and_then(|mut f| f.write_all(serialized_size.as_bytes()))
-            .expect("write size.json");
+        File::create("./size.json").and_then(|mut f| f.write_all(serialized_size.as_bytes()))?;
 
         File::create("./config.json")
-            .and_then(|mut f| f.write_all(serialized_config.as_bytes()))
-            .expect("write config.json");
+            .and_then(|mut f| f.write_all(serialized_config.as_bytes()))?;
+
+        Ok(())
     }
 
     /// Submit the pending changes to the `Display`.

@@ -356,7 +356,7 @@ mod tests {
 
     #[test]
     fn location_ordering() {
-        assert!(Point::new(Line(0), Column(0)) == Point::new(Line(0), Column(0)));
+        assert_eq!(Point::new(Line(0), Column(0)), Point::new(Line(0), Column(0)));
         assert!(Point::new(Line(1), Column(0)) > Point::new(Line(0), Column(0)));
         assert!(Point::new(Line(0), Column(1)) > Point::new(Line(0), Column(0)));
         assert!(Point::new(Line(1), Column(1)) > Point::new(Line(0), Column(0)));

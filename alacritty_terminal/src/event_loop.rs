@@ -147,7 +147,7 @@ where
 
             // Write a copy of the bytes to the ref test file.
             if let Some(writer) = &mut writer {
-                writer.write_all(&buf[..unprocessed]).unwrap();
+                writer.write_all(&buf[..unprocessed])?;
             }
 
             // Parse the incoming bytes.
@@ -205,7 +205,7 @@ where
     pub fn spawn(mut self) -> JoinHandle<(Self, State)> {
         thread::spawn_named("PTY reader", move || {
             let mut state = State::default();
-            let mut buf = [0u8; READ_BUFFER_SIZE];
+            let mut buf = vec![0u8; READ_BUFFER_SIZE].into_boxed_slice();
 
             let poll_opts = PollMode::Level;
             let mut interest = PollingEvent::readable(0);
@@ -216,10 +216,17 @@ where
                 return (self, state);
             }
 
-            let mut events = Events::with_capacity(NonZeroUsize::new(1024).unwrap());
+            let event_capacity = NonZeroUsize::new(1024).unwrap_or(NonZeroUsize::MIN);
+            let mut events = Events::with_capacity(event_capacity);
 
             let mut pipe = if self.ref_test {
-                Some(File::create("./alacritty.recording").expect("create alacritty recording"))
+                match File::create("./alacritty.recording") {
+                    Ok(file) => Some(file),
+                    Err(err) => {
+                        error!("Unable to create alacritty recording: {err}");
+                        None
+                    },
+                }
             } else {
                 None
             };
@@ -232,13 +239,11 @@ where
 
                 events.clear();
                 if let Err(err) = self.poll.wait(&mut events, timeout) {
-                    match err.kind() {
-                        ErrorKind::Interrupted => continue,
-                        _ => {
-                            error!("Event loop polling error: {err}");
-                            break 'event_loop;
-                        },
+                    if err.kind() == ErrorKind::Interrupted {
+                        continue;
                     }
+                    error!("Event loop polling error: {err}");
+                    break 'event_loop;
                 }
 
                 // Handle synchronized update timeout.
@@ -277,29 +282,28 @@ where
                                 continue;
                             }
 
-                            if event.readable {
-                                if let Err(err) = self.pty_read(&mut state, &mut buf, pipe.as_mut())
-                                {
-                                    // On Linux, a `read` on the master side of a PTY can fail
-                                    // with `EIO` if the client side hangs up.  In that case,
-                                    // just loop back round for the inevitable `Exited` event.
-                                    // This sucks, but checking the process is either racy or
-                                    // blocking.
-                                    #[cfg(target_os = "linux")]
-                                    if err.raw_os_error() == Some(libc::EIO) {
-                                        continue;
-                                    }
-
-                                    error!("Error reading from PTY in event loop: {err}");
-                                    break 'event_loop;
+                            if event.readable
+                                && let Err(err) = self.pty_read(&mut state, &mut buf, pipe.as_mut())
+                            {
+                                // On Linux, a `read` on the master side of a PTY can fail
+                                // with `EIO` if the client side hangs up.  In that case,
+                                // just loop back round for the inevitable `Exited` event.
+                                // This sucks, but checking the process is either racy or
+                                // blocking.
+                                #[cfg(target_os = "linux")]
+                                if err.raw_os_error() == Some(libc::EIO) {
+                                    continue;
                                 }
+
+                                error!("Error reading from PTY in event loop: {err}");
+                                break 'event_loop;
                             }
 
-                            if event.writable {
-                                if let Err(err) = self.pty_write(&mut state) {
-                                    error!("Error writing to PTY in event loop: {err}");
-                                    break 'event_loop;
-                                }
+                            if event.writable
+                                && let Err(err) = self.pty_write(&mut state)
+                            {
+                                error!("Error writing to PTY in event loop: {err}");
+                                break 'event_loop;
                             }
                         },
                         _ => (),
@@ -312,7 +316,10 @@ where
                     interest.writable = needs_write;
 
                     // Re-register with new interest.
-                    self.pty.reregister(&self.poll, interest, poll_opts).unwrap();
+                    if let Err(err) = self.pty.reregister(&self.poll, interest, poll_opts) {
+                        error!("Event loop re-registration error: {err}");
+                        break 'event_loop;
+                    }
                 }
             }
 
@@ -478,7 +485,7 @@ impl<T> PeekableReceiver<T> {
             self.peeked.take()
         } else {
             match self.rx.try_recv() {
-                Err(TryRecvError::Disconnected) => panic!("event loop channel closed"),
+                Err(TryRecvError::Disconnected) => None,
                 res => res.ok(),
             }
         }

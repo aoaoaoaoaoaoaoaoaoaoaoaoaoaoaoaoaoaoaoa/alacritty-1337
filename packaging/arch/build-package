@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+packaging_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repository=$(cd -- "$packaging_dir/../.." && pwd)
+
+if [[ -z ${CARGO_TARGET_DIR:-} ]]; then
+    target_root=$(cargo metadata --manifest-path "$repository/Cargo.toml" \
+        --no-deps --format-version 1 \
+        | sed -E 's/.*"target_directory":"([^"]+)".*/\1/')
+    export CARGO_TARGET_DIR="$target_root/alacritty-1337-package"
+fi
+
+cd -- "$packaging_dir"
+exec makepkg --config "$packaging_dir/makepkg.conf" --clean --cleanbuild --force "$@"

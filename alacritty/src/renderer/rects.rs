@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::mem;
 
 use ahash::RandomState;
 use crossfont::Metrics;
@@ -48,22 +47,25 @@ pub enum RectKind {
     Undercurl = 1,
     DottedUnderline = 2,
     DashedUnderline = 3,
-    NumKinds = 4,
 }
 
-impl RenderLine {
-    pub fn rects(&self, flag: Flags, metrics: &Metrics, size: &SizeInfo) -> Vec<RenderRect> {
-        let mut rects = Vec::new();
+const RECT_KIND_COUNT: usize = 4;
 
+impl RenderLine {
+    pub fn append_rects(
+        &self,
+        rects: &mut Vec<RenderRect>,
+        flag: Flags,
+        metrics: &Metrics,
+        size: &SizeInfo,
+    ) {
         let mut start = self.start;
         while start.line < self.end.line {
             let end = Point::new(start.line, size.last_column());
-            Self::push_rects(&mut rects, metrics, size, flag, start, end, self.color);
+            Self::push_rects(rects, metrics, size, flag, start, end, self.color);
             start = Point::new(start.line + 1, Column(0));
         }
-        Self::push_rects(&mut rects, metrics, size, flag, start, self.end, self.color);
-
-        rects
+        Self::push_rects(rects, metrics, size, flag, start, self.end, self.color);
     }
 
     /// Push all rects required to draw the cell's line.
@@ -109,7 +111,7 @@ impl RenderLine {
             Flags::STRIKEOUT => {
                 (metrics.strikeout_position, metrics.strikeout_thickness, RectKind::Normal)
             },
-            _ => unimplemented!("Invalid flag for cell line drawing specified"),
+            _ => return,
         };
 
         let mut rect =
@@ -169,12 +171,13 @@ impl RenderLines {
 
     #[inline]
     pub fn rects(&self, metrics: &Metrics, size: &SizeInfo) -> Vec<RenderRect> {
-        self.inner
-            .iter()
-            .flat_map(|(flag, lines)| {
-                lines.iter().flat_map(move |line| line.rects(*flag, metrics, size))
-            })
-            .collect()
+        let mut rects = Vec::new();
+        for (flag, lines) in &self.inner {
+            for line in lines {
+                line.append_rects(&mut rects, *flag, metrics, size);
+            }
+        }
+        rects
     }
 
     /// Update the stored lines with the next cell info.
@@ -204,15 +207,14 @@ impl RenderLines {
         }
 
         // Check if there's an active line.
-        if let Some(line) = self.inner.get_mut(&flag).and_then(|lines| lines.last_mut()) {
-            if color == line.color
-                && cell.point.column == line.end.column + 1
-                && cell.point.line == line.end.line
-            {
-                // Update the length of the line.
-                line.end = end;
-                return;
-            }
+        if let Some(line) = self.inner.get_mut(&flag).and_then(|lines| lines.last_mut())
+            && color == line.color
+            && cell.point.column == line.end.column + 1
+            && cell.point.line == line.end.line
+        {
+            // Update the length of the line.
+            line.end = end;
+            return;
         }
 
         // Start new line if there currently is none.
@@ -220,7 +222,7 @@ impl RenderLines {
         match self.inner.get_mut(&flag) {
             Some(lines) => lines.push(line),
             None => {
-                self.inner.insert(flag, vec![line]);
+                let _ = self.inner.insert(flag, vec![line]);
             },
         }
     }
@@ -250,8 +252,8 @@ pub struct RectRenderer {
     vao: GLuint,
     vbo: GLuint,
 
-    programs: [RectShaderProgram; 4],
-    vertices: [Vec<Vertex>; 4],
+    programs: [RectShaderProgram; RECT_KIND_COUNT],
+    vertices: [Vec<Vertex>; RECT_KIND_COUNT],
 }
 
 impl RectRenderer {
@@ -275,8 +277,8 @@ impl RectRenderer {
 
         unsafe {
             // Allocate buffers.
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut vbo);
+            gl::GenVertexArrays(1, &raw mut vao);
+            gl::GenBuffers(1, &raw mut vbo);
 
             gl::BindVertexArray(vao);
 
@@ -291,11 +293,11 @@ impl RectRenderer {
                 2,
                 gl::FLOAT,
                 gl::FALSE,
-                mem::size_of::<Vertex>() as i32,
+                size_of::<Vertex>() as i32,
                 attribute_offset as *const _,
             );
             gl::EnableVertexAttribArray(0);
-            attribute_offset += mem::size_of::<f32>() * 2;
+            attribute_offset += size_of::<f32>() * 2;
 
             // Color.
             gl::VertexAttribPointer(
@@ -303,7 +305,7 @@ impl RectRenderer {
                 4,
                 gl::UNSIGNED_BYTE,
                 gl::TRUE,
-                mem::size_of::<Vertex>() as i32,
+                size_of::<Vertex>() as i32,
                 attribute_offset as *const _,
             );
             gl::EnableVertexAttribArray(1);
@@ -338,21 +340,21 @@ impl RectRenderer {
         unsafe {
             // We iterate in reverse order to draw plain rects at the end, since we want visual
             // bell or damage rects be above the lines.
-            for rect_kind in (RectKind::Normal as u8..RectKind::NumKinds as u8).rev() {
-                let vertices = &mut self.vertices[rect_kind as usize];
+            for rect_kind in (0..RECT_KIND_COUNT).rev() {
+                let vertices = &mut self.vertices[rect_kind];
                 if vertices.is_empty() {
                     continue;
                 }
 
-                let program = &self.programs[rect_kind as usize];
+                let program = &self.programs[rect_kind];
                 gl::UseProgram(program.id());
                 program.update_uniforms(size_info, metrics);
 
                 // Upload accumulated undercurl vertices.
                 gl::BufferData(
                     gl::ARRAY_BUFFER,
-                    (vertices.len() * mem::size_of::<Vertex>()) as isize,
-                    vertices.as_ptr() as *const _,
+                    (vertices.len() * size_of::<Vertex>()) as isize,
+                    vertices.as_ptr().cast(),
                     gl::STREAM_DRAW,
                 );
 
@@ -400,8 +402,8 @@ impl RectRenderer {
 impl Drop for RectRenderer {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteBuffers(1, &self.vbo);
-            gl::DeleteVertexArrays(1, &self.vao);
+            gl::DeleteBuffers(1, &raw const self.vbo);
+            gl::DeleteVertexArrays(1, &raw const self.vao);
         }
     }
 }
@@ -441,7 +443,7 @@ impl RectShaderProgram {
             RectKind::Undercurl => Some("#define DRAW_UNDERCURL\n"),
             RectKind::DottedUnderline => Some("#define DRAW_DOTTED\n"),
             RectKind::DashedUnderline => Some("#define DRAW_DASHED\n"),
-            _ => None,
+            RectKind::Normal => None,
         };
         let program = ShaderProgram::new(shader_version, header, RECT_SHADER_V, RECT_SHADER_F)?;
 

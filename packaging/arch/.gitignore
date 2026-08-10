@@ -1,0 +1,6 @@
+/alacritty-1337/
+/pkg/
+/src/
+/*.log
+/*.pkg.tar.*
+/*.src.tar.*

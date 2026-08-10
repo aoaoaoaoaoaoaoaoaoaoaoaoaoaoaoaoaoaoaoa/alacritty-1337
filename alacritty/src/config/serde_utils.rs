@@ -26,7 +26,7 @@ fn merge_tables(mut base: Table, replacement: Table) -> Table {
             Some(base_value) => merge(base_value, value),
             None => value,
         };
-        base.insert(key, value);
+        let _ = base.insert(key, value);
     }
 
     base

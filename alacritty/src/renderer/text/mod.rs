@@ -14,7 +14,7 @@ mod gles2;
 mod glsl3;
 pub mod glyph_cache;
 
-use atlas::Atlas;
+use atlas::AtlasCache;
 pub use gles2::Gles2Renderer;
 pub use glsl3::Glsl3Renderer;
 pub use glyph_cache::GlyphCache;
@@ -65,7 +65,7 @@ pub trait TextRenderer<'a> {
             for cell in cells {
                 api.draw_cell(cell, glyph_cache, size_info);
             }
-        })
+        });
     }
 
     fn with_api<'b: 'a, F, T>(&'b mut self, size_info: &'b SizeInfo, func: F) -> T
@@ -181,37 +181,25 @@ pub trait TextShader {
 
 #[derive(Debug)]
 pub struct LoaderApi<'a> {
-    active_tex: &'a mut GLuint,
-    atlas: &'a mut Vec<Atlas>,
-    current_atlas: &'a mut usize,
+    atlas: &'a mut AtlasCache,
 }
 
 impl LoadGlyph for LoaderApi<'_> {
     fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
-        Atlas::load_glyph(self.active_tex, self.atlas, self.current_atlas, rasterized)
+        self.atlas.load_glyph(rasterized)
     }
 
     fn clear(&mut self) {
-        Atlas::clear_atlas(self.atlas, self.current_atlas)
+        self.atlas.clear();
     }
 }
 
 fn update_projection(u_projection: GLint, size: &SizeInfo) {
-    let width = size.width();
-    let height = size.height();
-    let padding_x = size.padding_x();
-    let padding_y = size.padding_y();
-
-    // Bounds check.
-    if (width as u32) < (2 * padding_x as u32) || (height as u32) < (2 * padding_y as u32) {
-        return;
-    }
-
     // Compute scale and offset factors, from pixel to ndc space. Y is inverted.
     //   [0, width - 2 * padding_x] to [-1, 1]
     //   [height - 2 * padding_y, 0] to [-1, 1]
-    let scale_x = 2. / (width - 2. * padding_x);
-    let scale_y = -2. / (height - 2. * padding_y);
+    let scale_x = 2. / size.drawable_width();
+    let scale_y = -2. / size.drawable_height();
     let offset_x = -1.;
     let offset_y = 1.;
 

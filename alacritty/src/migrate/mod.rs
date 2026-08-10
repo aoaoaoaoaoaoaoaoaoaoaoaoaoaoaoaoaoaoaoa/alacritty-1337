@@ -1,7 +1,6 @@
 //! Configuration file migration.
 
-use std::fmt::Debug;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{fs, mem};
 
 use tempfile::NamedTempFile;
@@ -22,23 +21,25 @@ pub fn migrate(options: MigrateOptions) {
         .or_else(|| config::installed_config("yml"));
 
     // Abort if system has no installed configuration.
-    let config_path = match config_path {
-        Some(config_path) => config_path,
-        None => {
-            eprintln!("No configuration file found");
-            std::process::exit(1);
-        },
+    let config_path = if let Some(config_path) = config_path {
+        config_path
+    } else {
+        eprintln!("No configuration file found");
+        std::process::exit(1);
     };
 
     // If we're doing a wet run, perform a dry run first for safety.
     if !options.dry_run {
-        #[allow(clippy::redundant_clone)]
+        #[allow(
+            clippy::redundant_clone,
+            reason = "the clone is required by a platform-dependent ownership path"
+        )]
         let mut options = options.clone();
         options.silent = true;
         options.dry_run = true;
         if let Err(err) = migrate_config(&options, &config_path, config::IMPORT_RECURSION_LIMIT) {
             eprintln!("Configuration file migration failed:");
-            eprintln!("    {config_path:?}: {err}");
+            eprintln!("    {}: {err}", config_path.display());
             std::process::exit(1);
         }
     }
@@ -52,7 +53,7 @@ pub fn migrate(options: MigrateOptions) {
         },
         Err(err) => {
             eprintln!("Configuration file migration failed:");
-            eprintln!("    {config_path:?}: {err}");
+            eprintln!("    {}: {err}", config_path.display());
             std::process::exit(1);
         },
     }
@@ -65,22 +66,21 @@ fn migrate_config<'a>(
     recursion_limit: usize,
 ) -> Result<Migration<'a>, String> {
     // Ensure configuration file has an extension.
-    let path_str = path.to_string_lossy();
-    let (prefix, suffix) = match path_str.rsplit_once('.') {
-        Some((prefix, suffix)) => (prefix, suffix),
+    let suffix = match path.extension().and_then(|extension| extension.to_str()) {
+        Some(suffix) => suffix,
         None => return Err("missing file extension".to_string()),
     };
 
     // Handle legacy YAML files.
     if suffix == "yml" {
-        let new_path = yaml::migrate(options, path, recursion_limit, prefix)?;
+        let new_path = yaml::migrate(options, path, recursion_limit)?;
         return Ok(Migration::Yaml((path, new_path)));
     }
 
     // TOML only does renames, so return early if they are disabled.
     if options.skip_renames {
         if options.dry_run {
-            eprintln!("Ignoring TOML file {path:?} since `--skip-renames` was supplied");
+            eprintln!("Ignoring TOML file {} since `--skip-renames` was supplied", path.display());
         }
         return Ok(Migration::Toml(path));
     }
@@ -107,10 +107,11 @@ fn migrate_toml(toml: String) -> Result<DocumentMut, String> {
     };
 
     // Move `draw_bold_text_with_bright_colors` to its own section.
-    move_value(&mut document, &["draw_bold_text_with_bright_colors"], &[
-        "colors",
-        "draw_bold_text_with_bright_colors",
-    ])?;
+    move_value(
+        &mut document,
+        &["draw_bold_text_with_bright_colors"],
+        &["colors", "draw_bold_text_with_bright_colors"],
+    )?;
 
     // Move bindings to their own section.
     move_value(&mut document, &["key_bindings"], &["keyboard", "bindings"])?;
@@ -173,9 +174,8 @@ fn move_value(document: &mut DocumentMut, origin: &[&str], target: &[&str]) -> R
     // Find and remove the original item.
     let (mut origin_key, mut origin_item) = (None, document.as_item_mut());
     for element in origin {
-        let table = match origin_item.as_table_like_mut() {
-            Some(table) => table,
-            None => panic!("Moving from unsupported TOML structure"),
+        let Some(table) = origin_item.as_table_like_mut() else {
+            return Err(String::from("cannot move from a non-table TOML structure"));
         };
 
         let (key, item) = match table.get_key_value_mut(element) {
@@ -188,7 +188,7 @@ fn move_value(document: &mut DocumentMut, origin: &[&str], target: &[&str]) -> R
 
         // Ensure no empty tables are left behind.
         if let Some(table) = origin_item.as_table_mut() {
-            table.set_implicit(true)
+            table.set_implicit(true);
         }
     }
 
@@ -199,25 +199,25 @@ fn move_value(document: &mut DocumentMut, origin: &[&str], target: &[&str]) -> R
     // Create all dependencies for the new location.
     let mut target_item = document.as_item_mut();
     for (i, element) in target.iter().enumerate() {
-        let table = match target_item.as_table_like_mut() {
-            Some(table) => table,
-            None => panic!("Moving into unsupported TOML structure"),
+        let Some(table) = target_item.as_table_like_mut() else {
+            return Err(String::from("cannot move into a non-table TOML structure"));
         };
 
         if i + 1 == target.len() {
-            table.insert(element, origin_item);
+            let _ = table.insert(element, origin_item);
             // Move original key decorations.
             if let Some((leaf, dotted)) = origin_key_decor {
-                let mut key = table.key_mut(element).unwrap();
+                let Some(mut key) = table.key_mut(element) else {
+                    return Err(format!("inserted TOML key `{element}` disappeared"));
+                };
                 *key.leaf_decor_mut() = leaf;
                 *key.dotted_decor_mut() = dotted;
             }
 
             break;
-        } else {
-            // Create missing parent tables.
-            target_item = target_item[element].or_insert(toml_edit::table());
         }
+        // Create missing parent tables.
+        target_item = target_item[element].or_insert(toml_edit::table());
     }
 
     Ok(())
@@ -226,20 +226,23 @@ fn move_value(document: &mut DocumentMut, origin: &[&str], target: &[&str]) -> R
 /// Write migrated TOML to its target location.
 fn write_results<P>(options: &MigrateOptions, path: P, toml: &str) -> Result<(), String>
 where
-    P: AsRef<Path> + Debug,
+    P: AsRef<Path>,
 {
     let path = path.as_ref();
     if options.dry_run && !options.silent {
         // Output new content to STDOUT.
         println!(
-            "\nv-----Start TOML for {path:?}-----v\n\n{toml}\n^-----End TOML for {path:?}-----^\n"
+            "\nv-----Start TOML for {}-----v\n\n{toml}\n^-----End TOML for {}-----^\n",
+            path.display(),
+            path.display(),
         );
     } else if !options.dry_run {
         // Atomically replace the configuration file.
-        let tmp = NamedTempFile::new_in(path.parent().unwrap())
+        let parent = path.parent().ok_or_else(|| String::from("target has no parent directory"))?;
+        let tmp = NamedTempFile::new_in(parent)
             .map_err(|err| format!("could not create temporary file: {err}"))?;
         fs::write(tmp.path(), toml).map_err(|err| format!("filesystem error: {err}"))?;
-        tmp.persist(path).map_err(|err| format!("atomic replacement failed: {err}"))?;
+        let _ = tmp.persist(path).map_err(|err| format!("atomic replacement failed: {err}"))?;
     }
     Ok(())
 }
@@ -249,7 +252,7 @@ enum Migration<'a> {
     /// In-place TOML migration.
     Toml(&'a Path),
     /// YAML to TOML migration.
-    Yaml((&'a Path, String)),
+    Yaml((&'a Path, PathBuf)),
 }
 
 impl Migration<'_> {
@@ -257,23 +260,33 @@ impl Migration<'_> {
     fn success_message(&self, import: bool) -> String {
         match self {
             Self::Yaml((original_path, new_path)) if import => {
-                format!("Successfully migrated import {original_path:?} to {new_path:?}")
+                format!(
+                    "Successfully migrated import {} to {}",
+                    original_path.display(),
+                    new_path.display(),
+                )
             },
             Self::Yaml((original_path, new_path)) => {
-                format!("Successfully migrated {original_path:?} to {new_path:?}")
+                format!(
+                    "Successfully migrated {} to {}",
+                    original_path.display(),
+                    new_path.display(),
+                )
             },
             Self::Toml(original_path) if import => {
-                format!("Successfully migrated import {original_path:?}")
+                format!("Successfully migrated import {}", original_path.display())
             },
-            Self::Toml(original_path) => format!("Successfully migrated {original_path:?}"),
+            Self::Toml(original_path) => {
+                format!("Successfully migrated {}", original_path.display())
+            },
         }
     }
 
     /// Get the file path after migration.
-    fn new_path(&self) -> String {
+    fn new_path(&self) -> &Path {
         match self {
-            Self::Toml(path) => path.to_string_lossy().into(),
-            Self::Yaml((_, path)) => path.into(),
+            Self::Toml(path) => path,
+            Self::Yaml((_, path)) => path,
         }
     }
 }
@@ -284,7 +297,7 @@ mod tests {
 
     #[test]
     fn move_values() {
-        let input = r#"
+        let input = r"
 # This is a root_value.
 #
 # Use it with care.
@@ -295,21 +308,21 @@ table_value = 5
 
 [preexisting]
 not_moved = 9
-        "#;
+        ";
 
         let mut document = input.parse::<DocumentMut>().unwrap();
 
         move_value(&mut document, &["root_value"], &["new_table", "root_value"]).unwrap();
-        move_value(&mut document, &["table", "table_value"], &[
-            "preexisting",
-            "subtable",
-            "new_name",
-        ])
+        move_value(
+            &mut document,
+            &["table", "table_value"],
+            &["preexisting", "subtable", "new_name"],
+        )
         .unwrap();
 
         let output = document.to_string();
 
-        let expected = r#"
+        let expected = r"
 [preexisting]
 not_moved = 9
 
@@ -322,7 +335,7 @@ new_name = 5
 #
 # Use it with care.
 root_value = 3
-        "#;
+        ";
 
         assert_eq!(output, expected);
     }

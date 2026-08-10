@@ -2,7 +2,6 @@
 
 use polling::{Event as PollEvent, Events, Poller};
 use std::io::Error as IoError;
-use std::path::PathBuf;
 use std::process;
 
 use log::error;
@@ -40,17 +39,19 @@ impl IoListener {
         config: &UiConfig,
         options: &Options,
         event_proxy: EventLoopProxy<Event>,
-    ) -> Result<IoListenerHandle, IoError> {
+    ) -> Result<Option<std::path::PathBuf>, IoError> {
         let poller = Poller::new()?;
         let events = Events::new();
 
         // Create socket listener for IPC messages.
         let (ipc_socket_path, ipc_listener) = if config.ipc_socket() {
-            let ipc_socket_path = options.socket.clone().unwrap_or_else(|| {
-                let mut path = ipc::socket_dir();
+            let ipc_socket_path = if let Some(path) = options.socket.clone() {
+                path
+            } else {
+                let mut path = ipc::socket_dir()?;
                 path.push(format!("{}-{}.sock", ipc::socket_prefix(), process::id()));
                 path
-            });
+            };
             let ipc_listener = IpcListener::new(options, event_proxy.clone(), &ipc_socket_path)?;
             (Some(ipc_socket_path), Some(ipc_listener))
         } else {
@@ -66,9 +67,9 @@ impl IoListener {
             unsafe { poller.add(&ipc_listener.socket, PollEvent::readable(IPC_READ_KEY))? };
         }
 
-        let mut listener = Self { signal_listener, ipc_listener, events, poller };
+        let mut listener = Self { ipc_listener, signal_listener, events, poller };
 
-        thread::spawn_named("io event listener", move || {
+        let _ = thread::spawn_named("io event listener", move || {
             loop {
                 if let Err(err) = listener.poll() {
                     error!("Failed to poll for I/O events: {err}");
@@ -76,7 +77,7 @@ impl IoListener {
             }
         });
 
-        Ok(IoListenerHandle { ipc_socket_path })
+        Ok(ipc_socket_path)
     }
 
     /// Process the next I/O event.
@@ -89,7 +90,7 @@ impl IoListener {
 
         // Wait for the next event to be ready.
         self.events.clear();
-        self.poller.wait(&mut self.events, None)?;
+        let _ = self.poller.wait(&mut self.events, None)?;
 
         for event in self.events.iter() {
             if event.key == IPC_READ_KEY {
@@ -110,15 +111,10 @@ impl Drop for IoListener {
         if let Err(err) = self.poller.delete(&self.signal_listener.pipe) {
             error!("Failed to remove signal listener interest: {err}");
         }
-        if let Some(ipc_listener) = &self.ipc_listener {
-            if let Err(err) = self.poller.delete(&ipc_listener.socket) {
-                error!("Failed to remove IPC listener interest: {err}");
-            }
+        if let Some(ipc_listener) = &self.ipc_listener
+            && let Err(err) = self.poller.delete(&ipc_listener.socket)
+        {
+            error!("Failed to remove IPC listener interest: {err}");
         }
     }
-}
-
-/// Public I/O event listener state.
-pub struct IoListenerHandle {
-    pub ipc_socket_path: Option<PathBuf>,
 }

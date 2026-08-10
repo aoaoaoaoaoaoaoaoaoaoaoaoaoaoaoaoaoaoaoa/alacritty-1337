@@ -1,3 +1,4 @@
+use std::process;
 use std::thread::{Builder, JoinHandle};
 
 /// Like `thread::spawn`, but with a `name` argument.
@@ -7,5 +8,11 @@ where
     T: Send + 'static,
     S: Into<String>,
 {
-    Builder::new().name(name.into()).spawn(f).expect("thread spawn works")
+    match Builder::new().name(name.into()).spawn(f) {
+        Ok(handle) => handle,
+        Err(err) => {
+            eprintln!("fatal: unable to spawn worker thread: {err}");
+            process::abort();
+        },
+    }
 }

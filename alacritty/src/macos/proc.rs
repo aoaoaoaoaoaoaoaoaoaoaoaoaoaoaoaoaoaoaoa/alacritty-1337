@@ -1,8 +1,9 @@
-use std::ffi::{CStr, CString, IntoStringError};
+use std::ffi::OsString;
 use std::fmt::{self, Display, Formatter};
 use std::io;
 use std::mem::{self, MaybeUninit};
 use std::os::raw::{c_int, c_void};
+use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 
 /// Error during working directory retrieval.
@@ -10,19 +11,18 @@ use std::path::PathBuf;
 pub enum Error {
     Io(io::Error),
 
-    /// Error converting into utf8 string.
-    IntoString(IntoStringError),
-
     /// Expected return size didn't match libproc's.
     InvalidSize,
+
+    /// Kernel path did not contain a terminator within its fixed buffer.
+    UnterminatedPath,
 }
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::InvalidSize => None,
+            Error::InvalidSize | Error::UnterminatedPath => None,
             Error::Io(err) => err.source(),
-            Error::IntoString(err) => err.source(),
         }
     }
 }
@@ -31,10 +31,8 @@ impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Error::InvalidSize => write!(f, "Invalid proc_pidinfo return size"),
+            Error::UnterminatedPath => write!(f, "Unterminated proc_pidinfo path"),
             Error::Io(err) => write!(f, "Error getting current working directory: {}", err),
-            Error::IntoString(err) => {
-                write!(f, "Error when parsing current working directory: {}", err)
-            },
         }
     }
 }
@@ -45,31 +43,28 @@ impl From<io::Error> for Error {
     }
 }
 
-impl From<IntoStringError> for Error {
-    fn from(val: IntoStringError) -> Self {
-        Error::IntoString(val)
-    }
-}
-
 pub fn cwd(pid: c_int) -> Result<PathBuf, Error> {
     let mut info = MaybeUninit::<sys::proc_vnodepathinfo>::uninit();
     let info_ptr = info.as_mut_ptr() as *mut c_void;
     let size = mem::size_of::<sys::proc_vnodepathinfo>() as c_int;
 
-    let c_str = unsafe {
+    let info = unsafe {
         let pidinfo_size = sys::proc_pidinfo(pid, sys::PROC_PIDVNODEPATHINFO, 0, info_ptr, size);
         match pidinfo_size {
             c if c < 0 => return Err(io::Error::last_os_error().into()),
             s if s != size => return Err(Error::InvalidSize),
-            _ => CStr::from_ptr(info.assume_init().pvi_cdir.vip_path.as_ptr()),
+            _ => info.assume_init(),
         }
     };
+    let path = &info.pvi_cdir.vip_path;
+    let length = path.iter().position(|byte| *byte == 0).ok_or(Error::UnterminatedPath)?;
+    let bytes = path[..length].iter().map(|byte| *byte as u8).collect();
 
-    Ok(CString::from(c_str).into_string().map(PathBuf::from)?)
+    Ok(PathBuf::from(OsString::from_vec(bytes)))
 }
 
 /// Bindings for libproc.
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, reason = "name mirrors the macOS C ABI type")]
 mod sys {
     use std::os::raw::{c_char, c_int, c_longlong, c_void};
 

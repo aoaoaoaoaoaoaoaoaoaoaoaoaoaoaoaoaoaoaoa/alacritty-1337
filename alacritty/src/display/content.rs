@@ -28,7 +28,7 @@ pub struct RenderableContent<'a> {
     terminal_content: TerminalContent<'a>,
     cursor: RenderableCursor,
     cursor_shape: CursorShape,
-    cursor_point: Point<usize>,
+    cursor_point: Option<Point<usize>>,
     search: Option<HintMatches<'a>>,
     hint: Option<Hint<'a>>,
     config: &'a UiConfig,
@@ -64,7 +64,7 @@ impl<'a> RenderableContent<'a> {
         // Convert terminal cursor point to viewport position.
         let cursor_point = terminal_content.cursor.point;
         let display_offset = terminal_content.display_offset;
-        let cursor_point = term::point_to_viewport(display_offset, cursor_point).unwrap();
+        let cursor_point = term::point_to_viewport(display_offset, cursor_point);
 
         let hint = if display.hint_state.active() {
             display.hint_state.update_matches(term);
@@ -136,14 +136,14 @@ impl<'a> RenderableContent<'a> {
         }
 
         let width = if cell.flags.contains(Flags::WIDE_CHAR) {
-            NonZeroU32::new(2).unwrap()
+            NonZeroU32::new(2).unwrap_or(NonZeroU32::MIN)
         } else {
-            NonZeroU32::new(1).unwrap()
+            NonZeroU32::MIN
         };
         RenderableCursor {
             width,
             shape: self.cursor_shape,
-            point: self.cursor_point,
+            point: cell.point,
             cursor_color,
             text_color,
         }
@@ -161,9 +161,9 @@ impl Iterator for RenderableContent<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let cell = self.terminal_content.display_iter.next()?;
-            let mut cell = RenderableCell::new(self, cell);
+            let Some(mut cell) = RenderableCell::new(self, cell) else { continue };
 
-            if self.cursor_point == cell.point {
+            if self.cursor_point == Some(cell.point) {
                 // Store the cursor which should be rendered.
                 self.cursor = self.renderable_cursor(&cell);
                 if self.cursor.shape == CursorShape::Block {
@@ -206,7 +206,7 @@ pub struct RenderableCellExtra {
 }
 
 impl RenderableCell {
-    fn new(content: &mut RenderableContent<'_>, cell: Indexed<&Cell>) -> Self {
+    fn new(content: &mut RenderableContent<'_>, cell: Indexed<&Cell>) -> Option<Self> {
         // Lookup RGB values.
         let mut fg = Self::compute_fg_rgb(content, cell.fg, cell.flags);
         let mut bg = Self::compute_bg_rgb(content, cell.bg);
@@ -279,7 +279,7 @@ impl RenderableCell {
 
         // Convert cell point to viewport position.
         let cell_point = cell.point;
-        let point = term::point_to_viewport(display_offset, cell_point).unwrap();
+        let point = term::point_to_viewport(display_offset, cell_point)?;
 
         let underline = cell
             .underline_color()
@@ -295,7 +295,7 @@ impl RenderableCell {
             })
         });
 
-        RenderableCell { flags, character, bg_alpha, point, fg, bg, underline, extra }
+        Some(RenderableCell { character, point, fg, bg, bg_alpha, underline, flags, extra })
     }
 
     /// Check if cell contains any renderable content.
@@ -411,7 +411,7 @@ impl RenderableCursor {
         let shape = CursorShape::Hidden;
         let cursor_color = Rgb::default();
         let text_color = Rgb::default();
-        let width = NonZeroU32::new(1).unwrap();
+        let width = NonZeroU32::MIN;
         let point = Point::default();
         Self { shape, cursor_color, text_color, width, point }
     }

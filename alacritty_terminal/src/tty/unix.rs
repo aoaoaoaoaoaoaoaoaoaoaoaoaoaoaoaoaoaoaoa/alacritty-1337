@@ -1,5 +1,6 @@
 //! TTY related functionality.
 
+use std::env;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::{Error, ErrorKind, Read, Result};
@@ -13,15 +14,14 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::Arc;
-use std::{env, ptr};
 
 use libc::{F_GETFL, F_SETFL, O_NONBLOCK, TIOCSCTTY, c_int, fcntl};
 use log::error;
 use polling::{Event, PollMode, Poller};
-use rustix_openpty::openpty;
-use rustix_openpty::rustix::termios::Winsize;
+use rustix::termios::Winsize;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use rustix_openpty::rustix::termios::{self, InputModes, OptionalActions};
+use rustix::termios::{self, InputModes, OptionalActions};
+use rustix_openpty::openpty;
 use signal_hook::low_level::{pipe as signal_pipe, unregister as unregister_signal};
 use signal_hook::{SigId, consts as sigconsts};
 
@@ -34,13 +34,6 @@ pub(crate) const PTY_READ_WRITE_TOKEN: usize = 0;
 // Interest in new child events.
 pub(crate) const PTY_CHILD_EVENT_TOKEN: usize = 1;
 
-macro_rules! die {
-    ($($arg:tt)*) => {{
-        error!($($arg)*);
-        std::process::exit(1);
-    }};
-}
-
 /// Really only needed on BSD, but should be fine elsewhere.
 fn set_controlling_terminal(fd: c_int) -> Result<()> {
     let res = unsafe {
@@ -48,7 +41,6 @@ fn set_controlling_terminal(fd: c_int) -> Result<()> {
         // based on architecture (32/64). So a generic cast is used to make sure
         // there are no issues. To allow such a generic cast the clippy warning
         // is disabled.
-        #[allow(clippy::cast_lossless)]
         libc::ioctl(fd, TIOCSCTTY as _, 0)
     };
 
@@ -67,36 +59,40 @@ struct Passwd<'a> {
 /// # Unsafety
 ///
 /// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
-fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>> {
-    // Create zeroed passwd struct.
-    let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
-
-    let mut res: *mut libc::passwd = ptr::null_mut();
-
-    // Try and read the pw file.
+fn get_pw_entry(buf: &mut Vec<libc::c_char>) -> Result<Passwd<'_>> {
     let uid = unsafe { libc::getuid() };
-    let status = unsafe {
-        libc::getpwuid_r(uid, entry.as_mut_ptr(), buf.as_mut_ptr() as *mut _, buf.len(), &mut res)
-    };
-    let entry = unsafe { entry.assume_init() };
 
-    if status < 0 {
-        return Err(Error::other("getpwuid_r failed"));
+    loop {
+        let mut entry = MaybeUninit::<libc::passwd>::uninit();
+        let mut result = std::ptr::null_mut();
+        let status = unsafe {
+            libc::getpwuid_r(uid, entry.as_mut_ptr(), buf.as_mut_ptr(), buf.len(), &raw mut result)
+        };
+
+        if status == libc::ERANGE {
+            let new_len =
+                buf.len().checked_mul(2).ok_or_else(|| Error::other("passwd buffer overflow"))?;
+            buf.try_reserve_exact(new_len - buf.len()).map_err(Error::other)?;
+            buf.resize(new_len, 0);
+            continue;
+        }
+        if status != 0 {
+            return Err(Error::from_raw_os_error(status));
+        }
+        if result.is_null() {
+            return Err(Error::new(ErrorKind::NotFound, "passwd entry not found"));
+        }
+
+        let entry = unsafe { entry.assume_init() };
+        assert_eq!(entry.pw_uid, uid);
+
+        let invalid_utf8 = |_| Error::new(ErrorKind::InvalidData, "passwd entry is not UTF-8");
+        return Ok(Passwd {
+            name: unsafe { CStr::from_ptr(entry.pw_name) }.to_str().map_err(invalid_utf8)?,
+            dir: unsafe { CStr::from_ptr(entry.pw_dir) }.to_str().map_err(invalid_utf8)?,
+            shell: unsafe { CStr::from_ptr(entry.pw_shell) }.to_str().map_err(invalid_utf8)?,
+        });
     }
-
-    if res.is_null() {
-        return Err(Error::other("pw not found"));
-    }
-
-    // Sanity check.
-    assert_eq!(entry.pw_uid, uid);
-
-    // Build a borrowed Passwd struct.
-    Ok(Passwd {
-        name: unsafe { CStr::from_ptr(entry.pw_name).to_str().unwrap() },
-        dir: unsafe { CStr::from_ptr(entry.pw_dir).to_str().unwrap() },
-        shell: unsafe { CStr::from_ptr(entry.pw_shell).to_str().unwrap() },
-    })
 }
 
 pub struct Pty {
@@ -127,31 +123,23 @@ impl ShellUser {
     /// look for shell, username, longname, and home dir in the respective environment variables
     /// before falling back on looking into `passwd`.
     fn from_env() -> Result<Self> {
-        let mut buf = [0; 1024];
+        let mut buf = vec![0; 1024];
         let pw = get_pw_entry(&mut buf);
+        let passwd = || pw.as_ref().map_err(|err| Error::new(err.kind(), err.to_string()));
 
         let user = match env::var("USER") {
             Ok(user) => user,
-            Err(_) => match pw {
-                Ok(ref pw) => pw.name.to_owned(),
-                Err(err) => return Err(err),
-            },
+            Err(_) => passwd()?.name.to_owned(),
         };
 
         let home = match env::var("HOME") {
             Ok(home) => home,
-            Err(_) => match pw {
-                Ok(ref pw) => pw.dir.to_owned(),
-                Err(err) => return Err(err),
-            },
+            Err(_) => passwd()?.dir.to_owned(),
         };
 
         let shell = match env::var("SHELL") {
             Ok(shell) => shell,
-            Err(_) => match pw {
-                Ok(ref pw) => pw.shell.to_owned(),
-                Err(err) => return Err(err),
-            },
+            Err(_) => passwd()?.shell.to_owned(),
         };
 
         Ok(Self { user, home, shell })
@@ -165,7 +153,7 @@ fn default_shell_command(shell: &str, _user: &str, _home: &str) -> Command {
 
 #[cfg(target_os = "macos")]
 fn default_shell_command(shell: &str, user: &str, home: &str) -> Command {
-    let shell_name = shell.rsplit('/').next().unwrap();
+    let shell_name = shell.rsplit('/').next().unwrap_or(shell);
 
     // On macOS, use the `login` command so the shell will appear as a tty session.
     let mut login_command = Command::new("/usr/bin/login");
@@ -214,31 +202,29 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
 
     let mut builder = if let Some(shell) = config.shell.as_ref() {
         let mut cmd = Command::new(&shell.program);
-        cmd.args(shell.args.as_slice());
+        let _ = cmd.args(shell.args.as_slice());
         cmd
     } else {
         default_shell_command(&user.shell, &user.user, &user.home)
     };
 
     // Setup child stdin/stdout/stderr as slave fd of PTY.
-    builder.stdin(slave.try_clone()?);
-    builder.stderr(slave.try_clone()?);
-    builder.stdout(slave);
+    let _ = builder.stdin(slave.try_clone()?).stderr(slave.try_clone()?).stdout(slave);
 
     // Setup shell environment.
     let window_id = window_id.to_string();
-    builder.env("ALACRITTY_WINDOW_ID", &window_id);
-    builder.env("USER", user.user);
-    builder.env("HOME", user.home);
+    let _ = builder
+        .env("ALACRITTY_WINDOW_ID", &window_id)
+        .env("USER", user.user)
+        .env("HOME", user.home);
     // Set Window ID for clients relying on X11 hacks.
-    builder.env("WINDOWID", window_id);
+    let _ = builder.env("WINDOWID", window_id);
     for (key, value) in &config.env {
-        builder.env(key, value);
+        let _ = builder.env(key, value);
     }
 
     // Prevent child processes from inheriting linux-specific startup notification env.
-    builder.env_remove("XDG_ACTIVATION_TOKEN");
-    builder.env_remove("DESKTOP_STARTUP_ID");
+    let _ = builder.env_remove("XDG_ACTIVATION_TOKEN").env_remove("DESKTOP_STARTUP_ID");
 
     let working_directory = config
         .working_directory
@@ -246,7 +232,7 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
         .and_then(|path| CString::new(path.as_os_str().as_bytes()).ok());
 
     unsafe {
-        builder.pre_exec(move || {
+        let _ = builder.pre_exec(move || {
             // Create a new process group.
             let err = libc::setsid();
             if err == -1 {
@@ -254,25 +240,32 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
             }
 
             // Set working directory, ignoring invalid paths.
-            if let Some(working_directory) = working_directory.as_ref() {
-                libc::chdir(working_directory.as_ptr());
+            if let Some(working_directory) = working_directory.as_ref()
+                && libc::chdir(working_directory.as_ptr()) == -1
+            {
+                return Err(Error::last_os_error());
             }
 
             set_controlling_terminal(slave_fd)?;
 
             // No longer need slave/master fds.
-            libc::close(slave_fd);
-            libc::close(master_fd);
+            let _ = libc::close(slave_fd);
+            let _ = libc::close(master_fd);
 
-            libc::signal(libc::SIGCHLD, libc::SIG_DFL);
-            libc::signal(libc::SIGHUP, libc::SIG_DFL);
-            libc::signal(libc::SIGINT, libc::SIG_DFL);
-            libc::signal(libc::SIGQUIT, libc::SIG_DFL);
-            libc::signal(libc::SIGTERM, libc::SIG_DFL);
-            libc::signal(libc::SIGALRM, libc::SIG_DFL);
+            let _ = libc::signal(libc::SIGCHLD, libc::SIG_DFL);
+            let _ = libc::signal(libc::SIGHUP, libc::SIG_DFL);
+            let _ = libc::signal(libc::SIGINT, libc::SIG_DFL);
+            let _ = libc::signal(libc::SIGQUIT, libc::SIG_DFL);
+            let _ = libc::signal(libc::SIGTERM, libc::SIG_DFL);
+            let _ = libc::signal(libc::SIGALRM, libc::SIG_DFL);
 
             Ok(())
         });
+    }
+
+    // Set nonblocking before spawning so every post-spawn failure owns and reaps a child.
+    unsafe {
+        set_nonblocking(master_fd)?;
     }
 
     // Prepare signal handling before spawning child.
@@ -281,40 +274,44 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
 
         // Register the recv end of the pipe for SIGCHLD.
         let sig_id = signal_pipe::register(sigconsts::SIGCHLD, sender)?;
-        recv.set_nonblocking(true)?;
+        if let Err(err) = recv.set_nonblocking(true) {
+            let _ = unregister_signal(sig_id);
+            return Err(err);
+        }
         (recv, sig_id)
     };
 
     match builder.spawn() {
-        Ok(child) => {
-            unsafe {
-                // Maybe this should be done outside of this function so nonblocking
-                // isn't forced upon consumers. Although maybe it should be?
-                set_nonblocking(master_fd)?;
-            }
-
-            Ok(Pty { child, file: File::from(master), signals, sig_id })
+        Ok(child) => Ok(Pty { child, file: File::from(master), signals, sig_id }),
+        Err(err) => {
+            let _ = unregister_signal(sig_id);
+            Err(Error::new(
+                err.kind(),
+                format!(
+                    "Failed to spawn command '{}': {}",
+                    builder.get_program().to_string_lossy(),
+                    err
+                ),
+            ))
         },
-        Err(err) => Err(Error::new(
-            err.kind(),
-            format!(
-                "Failed to spawn command '{}': {}",
-                builder.get_program().to_string_lossy(),
-                err
-            ),
-        )),
     }
 }
 
 impl Drop for Pty {
     fn drop(&mut self) {
-        // Make sure the PTY is terminated properly.
-        unsafe {
-            libc::kill(self.child.id() as i32, libc::SIGHUP);
+        // An unreaped child retains its PID, so a successful live check closes the reuse window.
+        match self.child.try_wait() {
+            Ok(None) => unsafe {
+                if libc::kill(self.child.id() as i32, libc::SIGHUP) == -1 {
+                    error!("Unable to signal PTY child: {}", Error::last_os_error());
+                }
+            },
+            Ok(Some(_)) => (),
+            Err(err) => error!("Unable to inspect PTY child before shutdown: {err}"),
         }
 
         // Clear signal-hook handler.
-        unregister_signal(self.sig_id);
+        let _ = unregister_signal(self.sig_id);
 
         let _ = self.child.wait();
     }
@@ -411,10 +408,10 @@ impl OnResize for Pty {
     fn on_resize(&mut self, window_size: WindowSize) {
         let win = window_size.to_winsize();
 
-        let res = unsafe { libc::ioctl(self.file.as_raw_fd(), libc::TIOCSWINSZ, &win as *const _) };
+        let res = unsafe { libc::ioctl(self.file.as_raw_fd(), libc::TIOCSWINSZ, &raw const win) };
 
         if res < 0 {
-            die!("ioctl TIOCSWINSZ failed: {}", Error::last_os_error());
+            error!("ioctl TIOCSWINSZ failed: {}", Error::last_os_error());
         }
     }
 }
@@ -430,8 +427,8 @@ impl ToWinsize for WindowSize {
         let ws_row = self.num_lines as libc::c_ushort;
         let ws_col = self.num_cols as libc::c_ushort;
 
-        let ws_xpixel = ws_col * self.cell_width as libc::c_ushort;
-        let ws_ypixel = ws_row * self.cell_height as libc::c_ushort;
+        let ws_xpixel = ws_col.saturating_mul(self.cell_width as libc::c_ushort);
+        let ws_ypixel = ws_row.saturating_mul(self.cell_height as libc::c_ushort);
         Winsize { ws_row, ws_col, ws_xpixel, ws_ypixel }
     }
 }
@@ -443,6 +440,7 @@ unsafe fn set_nonblocking(fd: c_int) -> Result<()> {
 
 #[test]
 fn test_get_pw_entry() {
-    let mut buf: [i8; 1024] = [0; 1024];
+    let mut buf = vec![0];
     let _pw = get_pw_entry(&mut buf).unwrap();
+    assert!(buf.len() > 1);
 }

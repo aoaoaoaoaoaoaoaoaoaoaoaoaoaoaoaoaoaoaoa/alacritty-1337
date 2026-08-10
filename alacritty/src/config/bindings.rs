@@ -1,5 +1,3 @@
-#![allow(clippy::enum_glob_use)]
-
 use std::fmt::{self, Debug, Display};
 
 use bitflags::bitflags;
@@ -49,13 +47,28 @@ pub type KeyBinding = Binding<BindingKey>;
 /// Bindings that are triggered by a mouse event.
 pub type MouseBinding = Binding<MouseEvent>;
 
-impl<T: Eq> Binding<T> {
+pub trait BindingTrigger {
+    fn matches(&self, input: &Self) -> bool;
+    fn overlaps(&self, other: &Self) -> bool;
+}
+
+impl<T: PartialEq> BindingTrigger for Key<T> {
+    fn matches(&self, input: &Self) -> bool {
+        self == input
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        self == other
+    }
+}
+
+impl<T: BindingTrigger> Binding<T> {
     #[inline]
     pub fn is_triggered_by(&self, mode: BindingMode, mods: ModifiersState, input: &T) -> bool {
         // Check input first since bindings are stored in one big list. This is
         // the most likely item to fail so prioritizing it here allows more
         // checks to be short circuited.
-        self.trigger == *input
+        self.trigger.matches(input)
             && self.mods == mods
             && mode.contains(self.mode)
             && !mode.intersects(self.notmode)
@@ -64,7 +77,7 @@ impl<T: Eq> Binding<T> {
     #[inline]
     pub fn triggers_match(&self, binding: &Binding<T>) -> bool {
         // Check the binding's key and modifiers.
-        if self.trigger != binding.trigger || self.mods != binding.mods {
+        if !self.trigger.overlaps(&binding.trigger) || self.mods != binding.mods {
             return false;
         }
 
@@ -335,7 +348,7 @@ pub enum ViAction {
 }
 
 /// Search mode specific actions.
-#[allow(clippy::enum_variant_names)]
+#[allow(clippy::enum_variant_names, reason = "mouse button names mirror winit's public vocabulary")]
 #[derive(ConfigDeserialize, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SearchAction {
     /// Move the focus to the next search match.
@@ -633,7 +646,7 @@ pub enum BindingKey {
 }
 
 /// Key location for matching bindings.
-#[derive(Debug, Clone, Copy, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyLocation {
     /// The key is in its standard position.
     Standard,
@@ -647,22 +660,54 @@ impl From<WinitKeyLocation> for KeyLocation {
     fn from(value: WinitKeyLocation) -> Self {
         match value {
             WinitKeyLocation::Standard => KeyLocation::Standard,
-            WinitKeyLocation::Left => KeyLocation::Any,
-            WinitKeyLocation::Right => KeyLocation::Any,
+            WinitKeyLocation::Left => KeyLocation::Standard,
+            WinitKeyLocation::Right => KeyLocation::Standard,
             WinitKeyLocation::Numpad => KeyLocation::Numpad,
         }
     }
 }
 
-impl PartialEq for KeyLocation {
-    fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (_, KeyLocation::Any)
-                | (KeyLocation::Any, _)
-                | (KeyLocation::Standard, KeyLocation::Standard)
-                | (KeyLocation::Numpad, KeyLocation::Numpad)
-        )
+impl KeyLocation {
+    fn matches(self, input: Self) -> bool {
+        self == Self::Any || self == input
+    }
+
+    fn overlaps(self, other: Self) -> bool {
+        self == Self::Any || other == Self::Any || self == other
+    }
+}
+
+impl BindingTrigger for BindingKey {
+    fn matches(&self, input: &Self) -> bool {
+        match (self, input) {
+            (Self::Scancode(expected), Self::Scancode(actual)) => expected == actual,
+            (
+                Self::Keycode { key: expected, location },
+                Self::Keycode { key: actual, location: actual_location },
+            ) => expected == actual && location.matches(*actual_location),
+            _ => false,
+        }
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Scancode(lhs), Self::Scancode(rhs)) => lhs == rhs,
+            (
+                Self::Keycode { key: lhs, location: lhs_location },
+                Self::Keycode { key: rhs, location: rhs_location },
+            ) => lhs == rhs && lhs_location.overlaps(*rhs_location),
+            _ => false,
+        }
+    }
+}
+
+impl BindingTrigger for MouseEvent {
+    fn matches(&self, input: &Self) -> bool {
+        self == input
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        self == other
     }
 }
 
@@ -672,79 +717,78 @@ impl<'a> Deserialize<'a> for BindingKey {
         D: Deserializer<'a>,
     {
         let value = SerdeValue::deserialize(deserializer)?;
-        match u32::deserialize(value.clone()) {
-            Ok(scancode) => Ok(BindingKey::Scancode(PhysicalKey::from_scancode(scancode))),
-            Err(_) => {
-                let keycode = String::deserialize(value.clone()).map_err(D::Error::custom)?;
-                let (key, location) = if keycode.chars().count() == 1 {
-                    (Key::Character(keycode.to_lowercase().into()), KeyLocation::Any)
-                } else {
-                    // Translate legacy winit codes into their modern counterparts.
-                    match keycode.as_str() {
-                        "Back" => (Key::Named(NamedKey::Backspace), KeyLocation::Any),
-                        "Up" => (Key::Named(NamedKey::ArrowUp), KeyLocation::Any),
-                        "Down" => (Key::Named(NamedKey::ArrowDown), KeyLocation::Any),
-                        "Left" => (Key::Named(NamedKey::ArrowLeft), KeyLocation::Any),
-                        "Right" => (Key::Named(NamedKey::ArrowRight), KeyLocation::Any),
-                        "At" => (Key::Character("@".into()), KeyLocation::Any),
-                        "Colon" => (Key::Character(":".into()), KeyLocation::Any),
-                        "Period" => (Key::Character(".".into()), KeyLocation::Any),
-                        "LBracket" => (Key::Character("[".into()), KeyLocation::Any),
-                        "RBracket" => (Key::Character("]".into()), KeyLocation::Any),
-                        "Semicolon" => (Key::Character(";".into()), KeyLocation::Any),
-                        "Backslash" => (Key::Character("\\".into()), KeyLocation::Any),
+        if let Ok(scancode) = u32::deserialize(value.clone()) {
+            Ok(BindingKey::Scancode(PhysicalKey::from_scancode(scancode)))
+        } else {
+            let keycode = String::deserialize(value.clone()).map_err(D::Error::custom)?;
+            let (key, location) = if keycode.chars().count() == 1 {
+                (Key::Character(keycode.to_lowercase().into()), KeyLocation::Any)
+            } else {
+                // Translate legacy winit codes into their modern counterparts.
+                match keycode.as_str() {
+                    "Back" => (Key::Named(NamedKey::Backspace), KeyLocation::Any),
+                    "Up" => (Key::Named(NamedKey::ArrowUp), KeyLocation::Any),
+                    "Down" => (Key::Named(NamedKey::ArrowDown), KeyLocation::Any),
+                    "Left" => (Key::Named(NamedKey::ArrowLeft), KeyLocation::Any),
+                    "Right" => (Key::Named(NamedKey::ArrowRight), KeyLocation::Any),
+                    "At" => (Key::Character("@".into()), KeyLocation::Any),
+                    "Colon" => (Key::Character(":".into()), KeyLocation::Any),
+                    "Period" => (Key::Character(".".into()), KeyLocation::Any),
+                    "LBracket" => (Key::Character("[".into()), KeyLocation::Any),
+                    "RBracket" => (Key::Character("]".into()), KeyLocation::Any),
+                    "Semicolon" => (Key::Character(";".into()), KeyLocation::Any),
+                    "Backslash" => (Key::Character("\\".into()), KeyLocation::Any),
 
-                        // The keys which has alternative on numeric pad.
-                        "Enter" => (Key::Named(NamedKey::Enter), KeyLocation::Standard),
-                        "Return" => (Key::Named(NamedKey::Enter), KeyLocation::Standard),
-                        "Plus" => (Key::Character("+".into()), KeyLocation::Standard),
-                        "Comma" => (Key::Character(",".into()), KeyLocation::Standard),
-                        "Slash" => (Key::Character("/".into()), KeyLocation::Standard),
-                        "Equals" => (Key::Character("=".into()), KeyLocation::Standard),
-                        "Minus" => (Key::Character("-".into()), KeyLocation::Standard),
-                        "Asterisk" => (Key::Character("*".into()), KeyLocation::Standard),
-                        "Key1" => (Key::Character("1".into()), KeyLocation::Standard),
-                        "Key2" => (Key::Character("2".into()), KeyLocation::Standard),
-                        "Key3" => (Key::Character("3".into()), KeyLocation::Standard),
-                        "Key4" => (Key::Character("4".into()), KeyLocation::Standard),
-                        "Key5" => (Key::Character("5".into()), KeyLocation::Standard),
-                        "Key6" => (Key::Character("6".into()), KeyLocation::Standard),
-                        "Key7" => (Key::Character("7".into()), KeyLocation::Standard),
-                        "Key8" => (Key::Character("8".into()), KeyLocation::Standard),
-                        "Key9" => (Key::Character("9".into()), KeyLocation::Standard),
-                        "Key0" => (Key::Character("0".into()), KeyLocation::Standard),
+                    // The keys which has alternative on numeric pad.
+                    "Enter" => (Key::Named(NamedKey::Enter), KeyLocation::Standard),
+                    "Return" => (Key::Named(NamedKey::Enter), KeyLocation::Standard),
+                    "Plus" => (Key::Character("+".into()), KeyLocation::Standard),
+                    "Comma" => (Key::Character(",".into()), KeyLocation::Standard),
+                    "Slash" => (Key::Character("/".into()), KeyLocation::Standard),
+                    "Equals" => (Key::Character("=".into()), KeyLocation::Standard),
+                    "Minus" => (Key::Character("-".into()), KeyLocation::Standard),
+                    "Asterisk" => (Key::Character("*".into()), KeyLocation::Standard),
+                    "Key1" => (Key::Character("1".into()), KeyLocation::Standard),
+                    "Key2" => (Key::Character("2".into()), KeyLocation::Standard),
+                    "Key3" => (Key::Character("3".into()), KeyLocation::Standard),
+                    "Key4" => (Key::Character("4".into()), KeyLocation::Standard),
+                    "Key5" => (Key::Character("5".into()), KeyLocation::Standard),
+                    "Key6" => (Key::Character("6".into()), KeyLocation::Standard),
+                    "Key7" => (Key::Character("7".into()), KeyLocation::Standard),
+                    "Key8" => (Key::Character("8".into()), KeyLocation::Standard),
+                    "Key9" => (Key::Character("9".into()), KeyLocation::Standard),
+                    "Key0" => (Key::Character("0".into()), KeyLocation::Standard),
 
-                        // Special case numpad.
-                        "NumpadEnter" => (Key::Named(NamedKey::Enter), KeyLocation::Numpad),
-                        "NumpadAdd" => (Key::Character("+".into()), KeyLocation::Numpad),
-                        "NumpadComma" => (Key::Character(",".into()), KeyLocation::Numpad),
-                        "NumpadDecimal" => (Key::Character(".".into()), KeyLocation::Numpad),
-                        "NumpadDivide" => (Key::Character("/".into()), KeyLocation::Numpad),
-                        "NumpadEquals" => (Key::Character("=".into()), KeyLocation::Numpad),
-                        "NumpadSubtract" => (Key::Character("-".into()), KeyLocation::Numpad),
-                        "NumpadMultiply" => (Key::Character("*".into()), KeyLocation::Numpad),
-                        "Numpad1" => (Key::Character("1".into()), KeyLocation::Numpad),
-                        "Numpad2" => (Key::Character("2".into()), KeyLocation::Numpad),
-                        "Numpad3" => (Key::Character("3".into()), KeyLocation::Numpad),
-                        "Numpad4" => (Key::Character("4".into()), KeyLocation::Numpad),
-                        "Numpad5" => (Key::Character("5".into()), KeyLocation::Numpad),
-                        "Numpad6" => (Key::Character("6".into()), KeyLocation::Numpad),
-                        "Numpad7" => (Key::Character("7".into()), KeyLocation::Numpad),
-                        "Numpad8" => (Key::Character("8".into()), KeyLocation::Numpad),
-                        "Numpad9" => (Key::Character("9".into()), KeyLocation::Numpad),
-                        "Numpad0" => (Key::Character("0".into()), KeyLocation::Numpad),
-                        _ if keycode.starts_with("Dead") => {
-                            (Key::deserialize(value).map_err(D::Error::custom)?, KeyLocation::Any)
-                        },
-                        _ => (
-                            Key::Named(NamedKey::deserialize(value).map_err(D::Error::custom)?),
-                            KeyLocation::Any,
-                        ),
-                    }
-                };
+                    // Special case numpad.
+                    "NumpadEnter" => (Key::Named(NamedKey::Enter), KeyLocation::Numpad),
+                    "NumpadAdd" => (Key::Character("+".into()), KeyLocation::Numpad),
+                    "NumpadComma" => (Key::Character(",".into()), KeyLocation::Numpad),
+                    "NumpadDecimal" => (Key::Character(".".into()), KeyLocation::Numpad),
+                    "NumpadDivide" => (Key::Character("/".into()), KeyLocation::Numpad),
+                    "NumpadEquals" => (Key::Character("=".into()), KeyLocation::Numpad),
+                    "NumpadSubtract" => (Key::Character("-".into()), KeyLocation::Numpad),
+                    "NumpadMultiply" => (Key::Character("*".into()), KeyLocation::Numpad),
+                    "Numpad1" => (Key::Character("1".into()), KeyLocation::Numpad),
+                    "Numpad2" => (Key::Character("2".into()), KeyLocation::Numpad),
+                    "Numpad3" => (Key::Character("3".into()), KeyLocation::Numpad),
+                    "Numpad4" => (Key::Character("4".into()), KeyLocation::Numpad),
+                    "Numpad5" => (Key::Character("5".into()), KeyLocation::Numpad),
+                    "Numpad6" => (Key::Character("6".into()), KeyLocation::Numpad),
+                    "Numpad7" => (Key::Character("7".into()), KeyLocation::Numpad),
+                    "Numpad8" => (Key::Character("8".into()), KeyLocation::Numpad),
+                    "Numpad9" => (Key::Character("9".into()), KeyLocation::Numpad),
+                    "Numpad0" => (Key::Character("0".into()), KeyLocation::Numpad),
+                    _ if keycode.starts_with("Dead") => {
+                        (Key::deserialize(value).map_err(D::Error::custom)?, KeyLocation::Any)
+                    },
+                    _ => (
+                        Key::Named(NamedKey::deserialize(value).map_err(D::Error::custom)?),
+                        KeyLocation::Any,
+                    ),
+                }
+            };
 
-                Ok(BindingKey::Keycode { key, location })
-            },
+            Ok(BindingKey::Keycode { key, location })
         }
     }
 }
@@ -854,7 +898,7 @@ impl<'a> Deserialize<'a> for MouseEvent {
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str(
                     "Left, Right, Middle, Back, Forward, WheelUp, WheelDown, or a number from 0 \
-                     to 65536",
+                     to 65535",
                 )
             }
 
@@ -862,20 +906,18 @@ impl<'a> Deserialize<'a> for MouseEvent {
             where
                 E: de::Error,
             {
-                match value {
-                    0..=65536 => Ok(MouseEvent::Button(MouseButton::Other(value as u16))),
-                    _ => Err(E::invalid_value(Unexpected::Signed(value), &self)),
-                }
+                u16::try_from(value)
+                    .map(|button| MouseEvent::Button(MouseButton::Other(button)))
+                    .map_err(|_| E::invalid_value(Unexpected::Signed(value), &self))
             }
 
             fn visit_u64<E>(self, value: u64) -> Result<MouseEvent, E>
             where
                 E: de::Error,
             {
-                match value {
-                    0..=65536 => Ok(MouseEvent::Button(MouseButton::Other(value as u16))),
-                    _ => Err(E::invalid_value(Unexpected::Unsigned(value), &self)),
-                }
+                u16::try_from(value)
+                    .map(|button| MouseEvent::Button(MouseButton::Other(button)))
+                    .map_err(|_| E::invalid_value(Unexpected::Unsigned(value), &self))
             }
 
             fn visit_str<E>(self, value: &str) -> Result<MouseEvent, E>
@@ -912,32 +954,24 @@ struct RawBinding {
 }
 
 impl RawBinding {
-    fn into_mouse_binding(self) -> Result<MouseBinding, Box<Self>> {
-        if let Some(mouse) = self.mouse {
-            Ok(Binding {
-                trigger: mouse,
-                mods: self.mods,
-                action: self.action,
-                mode: self.mode,
-                notmode: self.notmode,
-            })
-        } else {
-            Err(Box::new(self))
-        }
+    fn into_mouse_binding(self) -> Option<MouseBinding> {
+        self.mouse.map(|mouse| Binding {
+            trigger: mouse,
+            mods: self.mods,
+            action: self.action,
+            mode: self.mode,
+            notmode: self.notmode,
+        })
     }
 
-    fn into_key_binding(self) -> Result<KeyBinding, Box<Self>> {
-        if let Some(key) = self.key {
-            Ok(KeyBinding {
-                trigger: key,
-                mods: self.mods,
-                action: self.action,
-                mode: self.mode,
-                notmode: self.notmode,
-            })
-        } else {
-            Err(Box::new(self))
-        }
+    fn into_key_binding(self) -> Option<KeyBinding> {
+        self.key.map(|key| KeyBinding {
+            trigger: key,
+            mods: self.mods,
+            action: self.action,
+            mode: self.mode,
+            notmode: self.notmode,
+        })
     }
 }
 
@@ -1029,7 +1063,7 @@ impl<'a> Deserialize<'a> for RawBinding {
                                     Ok(scancode) => {
                                         key = Some(BindingKey::Scancode(KeyCode::from_scancode(
                                             scancode,
-                                        )))
+                                        )));
                                     },
                                     Err(_) => {
                                         return Err(<V::Error as Error>::custom(format!(
@@ -1040,7 +1074,7 @@ impl<'a> Deserialize<'a> for RawBinding {
                                 None => {
                                     key = Some(
                                         BindingKey::deserialize(value).map_err(V::Error::custom)?,
-                                    )
+                                    );
                                 },
                             }
                         },
@@ -1163,7 +1197,7 @@ impl<'a> Deserialize<'a> for MouseBinding {
     {
         let raw = RawBinding::deserialize(deserializer)?;
         raw.into_mouse_binding()
-            .map_err(|_| D::Error::custom("expected mouse binding, got key binding"))
+            .ok_or_else(|| D::Error::custom("expected mouse binding, got key binding"))
     }
 }
 
@@ -1174,7 +1208,7 @@ impl<'a> Deserialize<'a> for KeyBinding {
     {
         let raw = RawBinding::deserialize(deserializer)?;
         raw.into_key_binding()
-            .map_err(|_| D::Error::custom("expected key binding, got mouse binding"))
+            .ok_or_else(|| D::Error::custom("expected key binding, got mouse binding"))
     }
 }
 
@@ -1206,10 +1240,10 @@ impl ModsWrapper {
     }
 }
 
-impl<'a> de::Deserialize<'a> for ModsWrapper {
+impl<'a> Deserialize<'a> for ModsWrapper {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: de::Deserializer<'a>,
+        D: Deserializer<'a>,
     {
         struct ModsVisitor;
 
@@ -1251,6 +1285,16 @@ mod tests {
     use winit::keyboard::ModifiersState;
 
     type MockBinding = Binding<usize>;
+
+    impl BindingTrigger for usize {
+        fn matches(&self, input: &Self) -> bool {
+            self == input
+        }
+
+        fn overlaps(&self, other: &Self) -> bool {
+            self == other
+        }
+    }
 
     impl Default for MockBinding {
         fn default() -> Self {

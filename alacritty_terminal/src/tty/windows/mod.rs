@@ -160,7 +160,7 @@ fn cmdline(config: &Options) -> String {
     let shell = config.shell.as_ref().unwrap_or(&default_shell);
 
     let mut cmd = String::new();
-    cmd.push_str(&shell.program);
+    push_escaped_arg(&mut cmd, &shell.program);
 
     for arg in &shell.args {
         cmd.push(' ');
@@ -171,6 +171,10 @@ fn cmdline(config: &Options) -> String {
         }
     }
     cmd
+}
+
+fn application(config: &Options) -> &str {
+    config.shell.as_ref().map_or("powershell", |shell| shell.program.as_str())
 }
 
 /// Converts the string slice into a Windows-standard representation for "W"-

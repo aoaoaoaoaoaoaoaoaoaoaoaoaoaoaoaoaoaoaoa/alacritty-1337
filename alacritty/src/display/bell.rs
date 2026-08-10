@@ -33,8 +33,10 @@ impl VisualBell {
             Some(earlier) => {
                 if Instant::now().duration_since(earlier) >= self.duration {
                     self.start_time = None;
+                    true
+                } else {
+                    false
                 }
-                false
             },
             None => true,
         }
@@ -64,10 +66,8 @@ impl VisualBell {
                 }
 
                 let elapsed = instant.duration_since(earlier);
-                let elapsed_f =
-                    elapsed.as_secs() as f64 + f64::from(elapsed.subsec_nanos()) / 1e9f64;
-                let duration_f = self.duration.as_secs() as f64
-                    + f64::from(self.duration.subsec_nanos()) / 1e9f64;
+                let elapsed_f = elapsed.as_secs_f64();
+                let duration_f = self.duration.as_secs_f64();
 
                 // Otherwise, we compute a value `time` from 0.0 to 1.0
                 // inclusive that represents the ratio of `elapsed` time to the
@@ -78,9 +78,8 @@ impl VisualBell {
                 // VisualBell. When `time` is 0.0, `inverse_intensity` is 0.0,
                 // and when `time` is 1.0, `inverse_intensity` is 1.0.
                 let inverse_intensity = match self.animation {
-                    BellAnimation::Ease | BellAnimation::EaseOut => {
-                        cubic_bezier(0.25, 0.1, 0.25, 1.0, time)
-                    },
+                    BellAnimation::Ease => cubic_bezier(0.25, 0.1, 0.25, 1.0, time),
+                    BellAnimation::EaseOut => cubic_bezier(0.0, 0.0, 0.58, 1.0, time),
                     BellAnimation::EaseOutSine => cubic_bezier(0.39, 0.575, 0.565, 1.0, time),
                     BellAnimation::EaseOutQuad => cubic_bezier(0.25, 0.46, 0.45, 0.94, time),
                     BellAnimation::EaseOutCubic => cubic_bezier(0.215, 0.61, 0.355, 1.0, time),
@@ -114,9 +113,56 @@ impl From<&BellConfig> for VisualBell {
     }
 }
 
-fn cubic_bezier(p0: f64, p1: f64, p2: f64, p3: f64, x: f64) -> f64 {
-    (1.0 - x).powi(3) * p0
-        + 3.0 * (1.0 - x).powi(2) * x * p1
-        + 3.0 * (1.0 - x) * x.powi(2) * p2
-        + x.powi(3) * p3
+fn cubic_bezier(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
+    if x <= 0. {
+        return 0.;
+    }
+    if x >= 1. {
+        return 1.;
+    }
+
+    // CSS timing functions parameterize both axes. Invert x(t) before evaluating y(t).
+    let mut lower = 0.;
+    let mut upper = 1.;
+    for _ in 0..32 {
+        let t = f64::midpoint(lower, upper);
+        if bezier_axis(t, x1, x2) < x {
+            lower = t;
+        } else {
+            upper = t;
+        }
+    }
+    bezier_axis(f64::midpoint(lower, upper), y1, y2)
+}
+
+fn bezier_axis(t: f64, first: f64, second: f64) -> f64 {
+    let inverse = 1. - t;
+    3. * inverse.powi(2) * t * first + 3. * inverse * t.powi(2) * second + t.powi(3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn css_bezier_has_exact_endpoints() {
+        assert_eq!(cubic_bezier(0.25, 0.1, 0.25, 1., 0.), 0.);
+        assert_eq!(cubic_bezier(0.25, 0.1, 0.25, 1., 1.), 1.);
+    }
+
+    #[test]
+    fn ease_and_ease_out_are_distinct() {
+        assert_ne!(cubic_bezier(0.25, 0.1, 0.25, 1., 0.5), cubic_bezier(0., 0., 0.58, 1., 0.5));
+    }
+
+    #[test]
+    fn elapsed_bell_completes_immediately() {
+        let mut bell = VisualBell {
+            animation: BellAnimation::Linear,
+            duration: Duration::ZERO,
+            start_time: Some(Instant::now()),
+        };
+        assert!(bell.completed());
+        assert!(bell.start_time.is_none());
+    }
 }

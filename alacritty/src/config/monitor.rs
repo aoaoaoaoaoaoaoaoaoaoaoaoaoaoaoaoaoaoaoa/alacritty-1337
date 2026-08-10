@@ -1,5 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
@@ -26,7 +24,7 @@ const FALLBACK_POLLING_TIMEOUT: Duration = Duration::from_secs(1);
 pub struct ConfigMonitor {
     thread: JoinHandle<()>,
     shutdown_tx: Sender<Result<NotifyEvent, NotifyError>>,
-    watched_hash: Option<u64>,
+    watched_paths: Vec<PathBuf>,
 }
 
 impl ConfigMonitor {
@@ -36,8 +34,8 @@ impl ConfigMonitor {
             return None;
         }
 
-        // Calculate the hash for the unmodified list of paths.
-        let watched_hash = Self::hash_paths(&paths);
+        // Preserve the logical import set before expanding it for filesystem watching.
+        let watched_paths = Self::normalize_paths(&paths);
 
         // Exclude char devices like `/dev/null`, sockets, and so on, by checking that file type is
         // a regular file.
@@ -75,7 +73,7 @@ impl ConfigMonitor {
                 .iter()
                 .map(|path| {
                     let mut path = path.clone();
-                    path.pop();
+                    let _ = path.pop();
                     path
                 })
                 .collect::<Vec<PathBuf>>();
@@ -85,7 +83,7 @@ impl ConfigMonitor {
             // Watch all configuration file directories.
             for parent in &parents {
                 if let Err(err) = watcher.watch(parent, RecursiveMode::NonRecursive) {
-                    debug!("Unable to watch config directory {parent:?}: {err}");
+                    debug!("Unable to watch config directory {}: {err}", parent.display());
                 }
             }
 
@@ -98,16 +96,13 @@ impl ConfigMonitor {
             loop {
                 // We use `recv_timeout` to debounce the events coming from the watcher and reduce
                 // the amount of config reloads.
-                let event = match debouncing_deadline.as_ref() {
-                    Some(debouncing_deadline) => rx.recv_timeout(
-                        debouncing_deadline.saturating_duration_since(Instant::now()),
-                    ),
-                    None => {
-                        let event = rx.recv().map_err(Into::into);
-                        // Set the debouncing deadline after receiving the event.
-                        debouncing_deadline = Some(Instant::now() + DEBOUNCE_DELAY);
-                        event
-                    },
+                let event = if let Some(debouncing_deadline) = debouncing_deadline.as_ref() {
+                    rx.recv_timeout(debouncing_deadline.saturating_duration_since(Instant::now()))
+                } else {
+                    let event = rx.recv().map_err(Into::into);
+                    // Set the debouncing deadline after receiving the event.
+                    debouncing_deadline = Some(Instant::now() + DEBOUNCE_DELAY);
+                    event
                 };
 
                 match event {
@@ -147,11 +142,11 @@ impl ConfigMonitor {
                         debug!("Config watcher channel dropped unexpectedly: {err}");
                         break;
                     },
-                };
+                }
             }
         });
 
-        Some(Self { watched_hash, thread: join_handle, shutdown_tx: tx })
+        Some(Self { watched_paths, thread: join_handle, shutdown_tx: tx })
     }
 
     /// Synchronously shut down the monitor.
@@ -172,27 +167,41 @@ impl ConfigMonitor {
     /// This checks the supplied list of files against the monitored files to determine if a
     /// restart is necessary.
     pub fn needs_restart(&self, files: &[PathBuf]) -> bool {
-        Self::hash_paths(files).is_none_or(|hash| Some(hash) == self.watched_hash)
+        Self::normalize_paths(files) != self.watched_paths
     }
 
-    /// Generate the hash for a list of paths.
-    fn hash_paths(files: &[PathBuf]) -> Option<u64> {
-        // Use file count limit to avoid allocations.
-        const MAX_PATHS: usize = 1024;
-        if files.len() > MAX_PATHS {
-            return None;
-        }
+    fn normalize_paths(files: &[PathBuf]) -> Vec<PathBuf> {
+        let mut files = files.to_vec();
+        files.sort_unstable();
+        files.dedup();
+        files
+    }
+}
 
-        // Sort files to avoid restart on order change.
-        let mut sorted_files = [None; MAX_PATHS];
-        for (i, file) in files.iter().enumerate() {
-            sorted_files[i] = Some(file);
-        }
-        sorted_files.sort_unstable();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        // Calculate hash for the paths, regardless of order.
-        let mut hasher = DefaultHasher::new();
-        Hash::hash_slice(&sorted_files, &mut hasher);
-        Some(hasher.finish())
+    fn monitor(paths: &[&str]) -> ConfigMonitor {
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel();
+        ConfigMonitor {
+            thread: std::thread::spawn(|| {}),
+            shutdown_tx,
+            watched_paths: ConfigMonitor::normalize_paths(
+                &paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
+            ),
+        }
+    }
+
+    #[test]
+    fn restart_only_when_import_set_changes() {
+        let monitor = monitor(&["primary.toml", "import.toml"]);
+
+        assert!(!monitor.needs_restart(&[
+            PathBuf::from("import.toml"),
+            PathBuf::from("primary.toml"),
+            PathBuf::from("import.toml"),
+        ]));
+        assert!(monitor.needs_restart(&[PathBuf::from("primary.toml")]));
     }
 }

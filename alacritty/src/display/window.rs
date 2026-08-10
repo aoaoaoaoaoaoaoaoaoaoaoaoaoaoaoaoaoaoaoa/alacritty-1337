@@ -62,6 +62,9 @@ pub enum Error {
 
     /// Error dealing with fonts.
     Font(crossfont::Error),
+
+    /// Error accessing the native window handle.
+    Handle(winit::raw_window_handle::HandleError),
 }
 
 /// Result of fallible operations concerning a Window.
@@ -72,6 +75,7 @@ impl std::error::Error for Error {
         match self {
             Error::WindowCreation(err) => err.source(),
             Error::Font(err) => err.source(),
+            Error::Handle(err) => err.source(),
         }
     }
 }
@@ -81,6 +85,7 @@ impl Display for Error {
         match self {
             Error::WindowCreation(err) => write!(f, "Error creating GL context; {err}"),
             Error::Font(err) => err.fmt(f),
+            Error::Handle(err) => err.fmt(f),
         }
     }
 }
@@ -94,6 +99,12 @@ impl From<winit::error::OsError> for Error {
 impl From<crossfont::Error> for Error {
     fn from(val: crossfont::Error) -> Self {
         Error::Font(val)
+    }
+}
+
+impl From<winit::raw_window_handle::HandleError> for Error {
+    fn from(val: winit::raw_window_handle::HandleError) -> Self {
+        Error::Handle(val)
     }
 }
 
@@ -114,6 +125,7 @@ pub struct Window {
     pub hold: bool,
 
     window: WinitWindow,
+    raw_window_handle: RawWindowHandle,
 
     /// Current window title.
     title: String,
@@ -201,7 +213,8 @@ impl Window {
 
         let scale_factor = window.scale_factor();
         log::info!("Window scale factor: {scale_factor}");
-        let is_x11 = matches!(window.window_handle().unwrap().as_raw(), RawWindowHandle::Xlib(_));
+        let raw_window_handle = window.window_handle()?.as_raw();
+        let is_x11 = matches!(raw_window_handle, RawWindowHandle::Xlib(_));
 
         Ok(Self {
             hold: options.terminal_options.hold,
@@ -212,6 +225,7 @@ impl Window {
             has_frame: true,
             scale_factor,
             window,
+            raw_window_handle,
             is_x11,
             ime_inhibitor: Default::default(),
         })
@@ -219,7 +233,7 @@ impl Window {
 
     #[inline]
     pub fn raw_window_handle(&self) -> RawWindowHandle {
-        self.window.window_handle().unwrap().as_raw()
+        self.raw_window_handle
     }
 
     #[inline]
@@ -297,11 +311,11 @@ impl Window {
         let icon = {
             let mut decoder = Decoder::new(Cursor::new(WINDOW_ICON));
             decoder.set_transformations(png::Transformations::normalize_to_color8());
-            let mut reader = decoder.read_info().expect("invalid embedded icon");
-            let mut buf = vec![0; reader.output_buffer_size()];
-            let _ = reader.next_frame(&mut buf);
-            Icon::from_rgba(buf, reader.info().width, reader.info().height)
-                .expect("invalid embedded icon format")
+            decoder.read_info().ok().and_then(|mut reader| {
+                let mut buf = vec![0; reader.output_buffer_size()];
+                let _ = reader.next_frame(&mut buf).ok()?;
+                Icon::from_rgba(buf, reader.info().width, reader.info().height).ok()
+            })
         };
 
         let builder = WinitWindow::default_attributes()
@@ -309,7 +323,7 @@ impl Window {
             .with_decorations(window_config.decorations != Decorations::None);
 
         #[cfg(feature = "x11")]
-        let builder = builder.with_window_icon(Some(icon));
+        let builder = builder.with_window_icon(icon);
 
         #[cfg(feature = "x11")]
         let builder = match x11_visual {
@@ -436,13 +450,17 @@ impl Window {
         self.window.set_simple_fullscreen(simple_fullscreen);
     }
 
-    /// Set IME inhibitor state and disable IME while any are present.
+    /// Set IME inhibitor state and disable IME while any are present when the backend permits it.
     ///
-    /// IME is re-enabled once all inhibitors are unset.
+    /// X11 deliberately keeps its XIM context enabled because recreating that context can wedge
+    /// keyboard delivery in winit. Other backends re-enable IME once all inhibitors are unset.
     pub fn set_ime_inhibitor(&mut self, inhibitor: ImeInhibitor, inhibit: bool) {
         if self.ime_inhibitor.contains(inhibitor) != inhibit {
             self.ime_inhibitor.set(inhibitor, inhibit);
-            self.window.set_ime_allowed(self.ime_inhibitor.is_empty());
+            // Winit's X11 XIM bridge can stop delivering all key events after toggling IME.
+            if !self.is_x11 {
+                self.window.set_ime_allowed(self.ime_inhibitor.is_empty());
+            }
         }
     }
 
@@ -450,7 +468,7 @@ impl Window {
     pub fn update_ime_position(&self, point: Point<usize>, size: &SizeInfo) {
         // NOTE: X11 doesn't support cursor area, so we need to offset manually to not obscure
         // the text.
-        let offset = if self.is_x11 { 1 } else { 0 };
+        let offset = usize::from(self.is_x11);
         let nspot_x = f64::from(size.padding_x() + point.column.0 as f32 * size.cell_width());
         let nspot_y =
             f64::from(size.padding_y() + (point.line + offset) as f32 * size.cell_height());
@@ -480,7 +498,9 @@ impl Window {
             _ => return,
         };
 
-        view.window().unwrap().setHasShadow(has_shadows);
+        if let Some(window) = view.window() {
+            window.setHasShadow(has_shadows);
+        }
     }
 
     /// Select tab at the given `index`.
@@ -525,13 +545,18 @@ bitflags! {
 
 #[cfg(target_os = "macos")]
 fn use_srgb_color_space(window: &WinitWindow) {
-    let view = match window.window_handle().unwrap().as_raw() {
-        RawWindowHandle::AppKit(handle) => {
-            assert!(MainThreadMarker::new().is_some());
-            unsafe { handle.ns_view.cast::<NSView>().as_ref() }
+    let view = match window.window_handle() {
+        Ok(handle) => match handle.as_raw() {
+            RawWindowHandle::AppKit(handle) => {
+                assert!(MainThreadMarker::new().is_some());
+                unsafe { handle.ns_view.cast::<NSView>().as_ref() }
+            },
+            _ => return,
         },
-        _ => return,
+        Err(_) => return,
     };
 
-    view.window().unwrap().setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
+    if let Some(window) = view.window() {
+        window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
+    }
 }

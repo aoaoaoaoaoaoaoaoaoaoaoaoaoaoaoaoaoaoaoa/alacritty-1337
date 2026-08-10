@@ -1,5 +1,5 @@
-use std::cell::{OnceCell, RefCell};
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::{self, Formatter};
 use std::mem;
@@ -21,8 +21,8 @@ use alacritty_terminal::tty::{Options as PtyOptions, Shell};
 use crate::config::LOG_TARGET_CONFIG;
 use crate::config::bell::BellConfig;
 use crate::config::bindings::{
-    self, Action, Binding, BindingKey, KeyBinding, KeyLocation, ModeWrapper, ModsWrapper,
-    MouseBinding,
+    self, Binding, BindingKey, BindingMode, BindingTrigger, KeyBinding, KeyLocation, ModeWrapper,
+    ModsWrapper, MouseBinding,
 };
 use crate::config::color::Colors;
 use crate::config::cursor::Cursor;
@@ -83,7 +83,7 @@ pub struct UiConfig {
     /// Regex hints for interacting with terminal content.
     pub hints: Hints,
 
-    /// Config for the alacritty_terminal itself.
+    /// Config for the `alacritty_terminal` itself.
     pub terminal: Terminal,
 
     /// Keyboard configuration.
@@ -136,7 +136,7 @@ impl UiConfig {
             working_directory,
             shell,
             drain_on_exit: false,
-            env: HashMap::new(),
+            env: self.env.clone(),
             #[cfg(target_os = "windows")]
             escape_args: false,
         }
@@ -201,7 +201,7 @@ pub fn deserialize_bindings<'a, D, T>(
 ) -> Result<Vec<Binding<T>>, D::Error>
 where
     D: Deserializer<'a>,
-    T: Clone + Eq,
+    T: Clone + Eq + BindingTrigger,
     Binding<T>: Deserialize<'a>,
 {
     let values = Vec::<toml::Value>::deserialize(deserializer)?;
@@ -218,7 +218,7 @@ where
     }
 
     // Remove matching default bindings.
-    for binding in bindings.iter() {
+    for binding in &bindings {
         default.retain(|b| !b.triggers_match(binding));
     }
 
@@ -276,7 +276,6 @@ impl Default for Hints {
                         location: KeyLocation::Standard,
                     },
                     mods: ModsWrapper(ModifiersState::SHIFT | ModifiersState::CONTROL),
-                    cache: Default::default(),
                     mode: Default::default(),
                 }),
             })],
@@ -308,16 +307,18 @@ impl<'de> Deserialize<'de> for HintsAlphabet {
     {
         let value = String::deserialize(deserializer)?;
 
-        let mut character_count = 0;
+        let mut characters = HashSet::new();
         for character in value.chars() {
             if character.width() != Some(1) {
                 return Err(D::Error::custom("characters must be of width 1"));
             }
-            character_count += 1;
+            if !characters.insert(character) {
+                return Err(D::Error::custom("characters must be unique"));
+            }
         }
 
-        if character_count < 2 {
-            return Err(D::Error::custom("must include at last 2 characters"));
+        if characters.len() < 2 {
+            return Err(D::Error::custom("must include at least 2 characters"));
         }
 
         Ok(Self(value))
@@ -460,22 +461,19 @@ pub struct HintBinding {
     pub mods: ModsWrapper,
     #[serde(default)]
     pub mode: ModeWrapper,
-
-    /// Cache for on-demand [`HintBinding`] to [`KeyBinding`] conversion.
-    #[serde(skip)]
-    cache: OnceCell<KeyBinding>,
 }
 
 impl HintBinding {
-    /// Get the key binding for a hint.
-    pub fn key_binding(&self, hint: &Rc<Hint>) -> &KeyBinding {
-        self.cache.get_or_init(|| KeyBinding {
-            trigger: self.key.clone(),
-            mods: self.mods.0,
-            mode: self.mode.mode,
-            notmode: self.mode.not_mode,
-            action: Action::Hint(hint.clone()),
-        })
+    pub fn is_triggered_by(
+        &self,
+        mode: BindingMode,
+        mods: ModifiersState,
+        input: &BindingKey,
+    ) -> bool {
+        self.key.matches(input)
+            && self.mods.0 == mods
+            && mode.contains(self.mode.mode)
+            && !mode.intersects(self.mode.not_mode)
     }
 }
 
@@ -548,6 +546,14 @@ pub enum LazyRegexVariant {
 }
 
 impl LazyRegexVariant {
+    fn pattern(&self) -> &str {
+        match self {
+            Self::Compiled(pattern, _) | Self::Pattern(pattern) | Self::Uncompilable(pattern) => {
+                pattern
+            },
+        }
+    }
+
     /// Get a reference to the compiled regex.
     ///
     /// If the regex is not already compiled, this will compile the DFAs and store them for future
@@ -581,10 +587,7 @@ impl LazyRegexVariant {
 
 impl PartialEq for LazyRegexVariant {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Pattern(regex), Self::Pattern(other_regex)) => regex == other_regex,
-            _ => false,
-        }
+        self.pattern() == other.pattern()
     }
 }
 impl Eq for LazyRegexVariant {}
@@ -601,6 +604,7 @@ impl Default for Percentage {
 
 impl Percentage {
     pub fn new(value: f32) -> Self {
+        assert!(value.is_finite(), "percentage must be finite");
         Percentage(value.clamp(0., 1.))
     }
 
@@ -614,7 +618,12 @@ impl<'de> Deserialize<'de> for Percentage {
     where
         D: Deserializer<'de>,
     {
-        Ok(Percentage::new(f32::deserialize(deserializer)?))
+        let value = f32::deserialize(deserializer)?;
+        if !value.is_finite() || !(0. ..=1.).contains(&value) {
+            return Err(D::Error::custom("percentage must be finite and between 0 and 1"));
+        }
+
+        Ok(Percentage(value))
     }
 }
 
@@ -663,10 +672,10 @@ impl SerdeReplace for Program {
 }
 
 pub(crate) struct StringVisitor;
-impl serde::de::Visitor<'_> for StringVisitor {
+impl Visitor<'_> for StringVisitor {
     type Value = String;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str("a string")
     }
 
@@ -685,6 +694,33 @@ mod tests {
     use alacritty_terminal::term::test::mock_term;
 
     use crate::display::hint::visible_regex_match_iter;
+
+    #[test]
+    fn hint_alphabet_requires_distinct_single_width_characters() {
+        assert!(HintsAlphabet::deserialize(toml::Value::String("aa".into())).is_err());
+        assert!(HintsAlphabet::deserialize(toml::Value::String("a界".into())).is_err());
+        assert_eq!(HintsAlphabet::deserialize(toml::Value::String("ab".into())).unwrap().0, "ab");
+    }
+
+    #[test]
+    fn lazy_regex_equality_ignores_compilation_state() {
+        let mut compiled = LazyRegexVariant::Pattern("valid".into());
+        assert!(compiled.compiled().is_some());
+
+        assert_eq!(compiled, LazyRegexVariant::Pattern("valid".into()));
+        assert_eq!(
+            LazyRegexVariant::Uncompilable("valid".into()),
+            LazyRegexVariant::Pattern("valid".into())
+        );
+    }
+
+    #[test]
+    fn percentage_rejects_non_finite_and_out_of_range_values() {
+        for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+            assert!(Percentage::deserialize(toml::Value::Float(f64::from(value))).is_err());
+        }
+        assert_eq!(Percentage::deserialize(toml::Value::Float(0.5)).unwrap().as_f32(), 0.5);
+    }
 
     #[test]
     fn positive_url_parsing_regex_test() {
@@ -711,7 +747,7 @@ mod tests {
                 matches.len(),
                 1,
                 "Should have exactly one match url {regular_url}, but instead got: {matches:?}"
-            )
+            );
         }
     }
 
@@ -731,7 +767,7 @@ mod tests {
             assert!(
                 matches.is_empty(),
                 "Should not match url in string {url_like}, but instead got: {matches:?}"
-            )
+            );
         }
     }
 }

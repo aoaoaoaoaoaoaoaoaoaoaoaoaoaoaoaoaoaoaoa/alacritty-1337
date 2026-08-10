@@ -13,7 +13,7 @@ use crate::gl::types::*;
 use crate::renderer::Error;
 use crate::renderer::shader::{ShaderProgram, ShaderVersion};
 
-use super::atlas::{ATLAS_SIZE, Atlas};
+use super::atlas::AtlasCache;
 use super::{
     Glyph, LoadGlyph, LoaderApi, RenderingGlyphFlags, RenderingPass, TextRenderApi,
     TextRenderBatch, TextRenderer, TextShader,
@@ -32,9 +32,7 @@ pub struct Glsl3Renderer {
     vao: GLuint,
     ebo: GLuint,
     vbo_instance: GLuint,
-    atlas: Vec<Atlas>,
-    current_atlas: usize,
-    active_tex: GLuint,
+    atlas: AtlasCache,
     batch: Batch,
 }
 
@@ -54,9 +52,9 @@ impl Glsl3Renderer {
             // Disable depth mask, as the renderer never uses depth tests.
             gl::DepthMask(gl::FALSE);
 
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut ebo);
-            gl::GenBuffers(1, &mut vbo_instance);
+            gl::GenVertexArrays(1, &raw mut vao);
+            gl::GenBuffers(1, &raw mut ebo);
+            gl::GenBuffers(1, &raw mut vbo_instance);
             gl::BindVertexArray(vao);
 
             // ---------------------
@@ -68,7 +66,7 @@ impl Glsl3Renderer {
             gl::BufferData(
                 gl::ELEMENT_ARRAY_BUFFER,
                 (6 * size_of::<u32>()) as isize,
-                indices.as_ptr() as *const _,
+                indices.as_ptr().cast(),
                 gl::STATIC_DRAW,
             );
 
@@ -99,7 +97,10 @@ impl Glsl3Renderer {
                     gl::EnableVertexAttribArray(index);
                     gl::VertexAttribDivisor(index, 1);
 
-                    #[allow(unused_assignments)]
+                    #[allow(
+                        unused_assignments,
+                        reason = "the macro advances an offset consumed by later expansions"
+                    )]
                     {
                         size += $count * size_of::<$type>();
                         index += 1;
@@ -137,9 +138,7 @@ impl Glsl3Renderer {
             vao,
             ebo,
             vbo_instance,
-            atlas: vec![Atlas::new(ATLAS_SIZE, false)],
-            current_atlas: 0,
-            active_tex: 0,
+            atlas: AtlasCache::new(false),
             batch: Batch::new(),
         })
     }
@@ -165,10 +164,8 @@ impl<'a> TextRenderer<'a> for Glsl3Renderer {
         }
 
         let res = func(RenderApi {
-            active_tex: &mut self.active_tex,
             batch: &mut self.batch,
             atlas: &mut self.atlas,
-            current_atlas: &mut self.current_atlas,
             program: &mut self.program,
         });
 
@@ -188,30 +185,24 @@ impl<'a> TextRenderer<'a> for Glsl3Renderer {
     }
 
     fn loader_api(&mut self) -> LoaderApi<'_> {
-        LoaderApi {
-            active_tex: &mut self.active_tex,
-            atlas: &mut self.atlas,
-            current_atlas: &mut self.current_atlas,
-        }
+        LoaderApi { atlas: &mut self.atlas }
     }
 }
 
 impl Drop for Glsl3Renderer {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteBuffers(1, &self.vbo_instance);
-            gl::DeleteBuffers(1, &self.ebo);
-            gl::DeleteVertexArrays(1, &self.vao);
+            gl::DeleteBuffers(1, &raw const self.vbo_instance);
+            gl::DeleteBuffers(1, &raw const self.ebo);
+            gl::DeleteVertexArrays(1, &raw const self.vao);
         }
     }
 }
 
 #[derive(Debug)]
 pub struct RenderApi<'a> {
-    active_tex: &'a mut GLuint,
     batch: &'a mut Batch,
-    atlas: &'a mut Vec<Atlas>,
-    current_atlas: &'a mut usize,
+    atlas: &'a mut AtlasCache,
     program: &'a mut TextShaderProgram,
 }
 
@@ -226,17 +217,11 @@ impl TextRenderApi<Batch> for RenderApi<'_> {
                 gl::ARRAY_BUFFER,
                 0,
                 self.batch.size() as isize,
-                self.batch.instances.as_ptr() as *const _,
+                self.batch.instances.as_ptr().cast(),
             );
         }
 
-        // Bind texture if necessary.
-        if *self.active_tex != self.batch.tex() {
-            unsafe {
-                gl::BindTexture(gl::TEXTURE_2D, self.batch.tex());
-            }
-            *self.active_tex = self.batch.tex();
-        }
+        self.atlas.bind_texture(self.batch.tex());
 
         unsafe {
             self.program.set_rendering_pass(RenderingPass::Background);
@@ -263,11 +248,11 @@ impl TextRenderApi<Batch> for RenderApi<'_> {
 
 impl LoadGlyph for RenderApi<'_> {
     fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
-        Atlas::load_glyph(self.active_tex, self.atlas, self.current_atlas, rasterized)
+        self.atlas.load_glyph(rasterized)
     }
 
     fn clear(&mut self) {
-        Atlas::clear_atlas(self.atlas, self.current_atlas)
+        self.atlas.clear();
     }
 }
 

@@ -51,7 +51,10 @@ impl<'a> StrShortener<'a> {
 
         if direction == ShortenDirection::Right {
             return Self {
-                #[allow(clippy::iter_skip_zero)]
+                #[allow(
+                    clippy::iter_skip_zero,
+                    reason = "the generated offset is nonzero in other macro expansions"
+                )]
                 chars: text.chars().skip(0),
                 accumulated_len: 0,
                 text_action: TextAction::Char,
@@ -79,10 +82,9 @@ impl<'a> StrShortener<'a> {
                         // We have one more character after, shortener will accumulate for
                         // the `current_len`.
                         break;
-                    } else {
-                        // The match is exact, consume shortener.
-                        let _ = shortener.take();
                     }
+                    // The match is exact, consume shortener.
+                    let _ = shortener.take();
                 },
                 Ordering::Less => (),
             }
@@ -140,14 +142,17 @@ impl Iterator for StrShortener<'_> {
                 if self.accumulated_len > self.max_width {
                     self.text_action = TextAction::Terminate;
                     return self.shortener;
-                } else if self.accumulated_len == self.max_width && self.shortener.is_some() {
+                }
+                if self.accumulated_len == self.max_width
+                    && let Some(shortener) = self.shortener
+                {
                     // Check if we have a next char.
                     let has_next = self.chars.clone().next().is_some();
 
                     // We should terminate after that.
                     self.text_action = TextAction::Terminate;
 
-                    return has_next.then(|| self.shortener.unwrap()).or(Some(ch));
+                    return Some(if has_next { shortener } else { ch });
                 }
 
                 // Add a spacer for wide character.

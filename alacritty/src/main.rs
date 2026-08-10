@@ -1,8 +1,17 @@
 //! Alacritty - The GPU Enhanced Terminal.
 
-#![warn(rust_2018_idioms, future_incompatible)]
-#![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use)]
-#![cfg_attr(clippy, deny(warnings))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unimplemented,
+        clippy::unwrap_used,
+        unused_crate_dependencies,
+        unused_results,
+        reason = "tests use deliberate failure shortcuts and discard fixture mutations"
+    )
+)]
 // With the default subsystem, 'console', windows creates an additional console
 // window for the program.
 // This is silently ignored on non-windows systems.
@@ -12,6 +21,7 @@
 #[cfg(not(any(feature = "x11", feature = "wayland", target_os = "macos", windows)))]
 compile_error!(r#"at least one of the "x11"/"wayland" features must be enabled"#);
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Write as _;
 use std::io::{self, Write};
@@ -24,8 +34,6 @@ use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, 
 use winit::event_loop::EventLoop;
 #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
 use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
-
-use alacritty_terminal::tty;
 
 mod cli;
 mod clipboard;
@@ -49,7 +57,15 @@ mod string;
 mod window_context;
 
 mod gl {
-    #![allow(clippy::all, unsafe_op_in_unsafe_fn)]
+    #![allow(
+        clippy::all,
+        clippy::allow_attributes_without_reason,
+        clippy::panic,
+        clippy::pedantic,
+        clippy::unwrap_used,
+        unsafe_op_in_unsafe_fn,
+        reason = "gl_generator owns this generated binding surface"
+    )]
     include!(concat!(env!("OUT_DIR"), "/gl_bindings.rs"));
 }
 
@@ -93,7 +109,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 /// `msg` subcommand entrypoint.
 #[cfg(unix)]
-#[allow(unused_mut)]
+#[allow(unused_mut, reason = "activation-token mutation is platform-gated")]
 fn msg(mut options: MessageOptions) -> Result<(), Box<dyn Error>> {
     #[cfg(not(any(target_os = "macos", windows)))]
     if let SocketMessage::CreateWindow(window_options) = &mut options.message {
@@ -121,10 +137,10 @@ impl Drop for TemporaryFiles {
         }
 
         // Clean up logfile.
-        if let Some(log_file) = &self.log_file {
-            if fs::remove_file(log_file).is_ok() {
-                let _ = writeln!(io::stdout(), "Deleted log file at \"{}\"", log_file.display());
-            }
+        if let Some(log_file) = &self.log_file
+            && fs::remove_file(log_file).is_ok()
+        {
+            let _ = writeln!(io::stdout(), "Deleted log file at \"{}\"", log_file.display());
         }
     }
 }
@@ -134,12 +150,14 @@ impl Drop for TemporaryFiles {
 /// Creates a window, the terminal state, PTY, I/O event loop, input processor,
 /// config change monitor, and runs the main display loop.
 fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
+    #[cfg(target_os = "macos")]
+    let locale_environment = locale::set_locale_environment();
+
     // Setup winit event loop.
     let window_event_loop = EventLoop::<Event>::with_user_event().build()?;
 
     // Initialize the logger as soon as possible as to capture output from other subsystems.
-    let log_file = logging::initialize(&options, window_event_loop.create_proxy())
-        .expect("Unable to initialize logger");
+    let log_file = logging::initialize(&options, window_event_loop.create_proxy())?;
 
     info!("Welcome to Alacritty");
     info!("Version {}", env!("VERSION"));
@@ -147,10 +165,7 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
     #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
     info!(
         "Running on {}",
-        if matches!(
-            window_event_loop.display_handle().unwrap().as_raw(),
-            RawDisplayHandle::Wayland(_)
-        ) {
+        if matches!(window_event_loop.display_handle()?.as_raw(), RawDisplayHandle::Wayland(_)) {
             "Wayland"
         } else {
             "X11"
@@ -166,21 +181,23 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
     // Update the log level from config.
     log::set_max_level(config.debug.log_level);
 
-    // Set tty environment variables.
-    tty::setup_env();
+    let mut runtime_environment = HashMap::new();
+    if let Some(log_path) = &log_file {
+        let _ = runtime_environment
+            .insert(logging::ALACRITTY_LOG_ENV.into(), log_path.to_string_lossy().into_owned());
+    }
 
-    // Set env vars from config.
-    for (key, value) in config.env.iter() {
-        unsafe { env::set_var(key, value) };
+    #[cfg(target_os = "macos")]
+    if let Some((key, value)) = locale_environment {
+        let _ = runtime_environment.insert(key, value);
     }
 
     // Switch to home directory.
     #[cfg(target_os = "macos")]
-    env::set_current_dir(home::home_dir().unwrap()).unwrap();
-
-    // Set macOS locale.
-    #[cfg(target_os = "macos")]
-    locale::set_locale_environment();
+    env::set_current_dir(
+        home::home_dir()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "home directory"))?,
+    )?;
 
     #[cfg(target_os = "macos")]
     macos::disable_autofill();
@@ -188,13 +205,18 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
     // Spawn the Unix I/O event polling thread.
     #[cfg(unix)]
     let socket_path = match IoListener::spawn(&config, &options, window_event_loop.create_proxy()) {
-        Ok(handle) => handle.ipc_socket_path,
+        Ok(socket_path) => socket_path,
         Err(err) if options.daemon => return Err(err.into()),
         Err(err) => {
-            log::warn!("Unable to create socket: {err:?}");
+            log::warn!("Unable to create socket: {err}");
             None
         },
     };
+    #[cfg(unix)]
+    if let Some(socket_path) = &socket_path {
+        let _ = runtime_environment
+            .insert(ipc::ALACRITTY_SOCKET_ENV.into(), socket_path.to_string_lossy().into_owned());
+    }
 
     // Setup automatic RAII cleanup for our files.
     let log_cleanup = log_file.filter(|_| !config.debug.persistent_logging);
@@ -205,7 +227,7 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
     };
 
     // Event processor.
-    let mut processor = Processor::new(config, options, &window_event_loop);
+    let mut processor = Processor::new(config, runtime_environment, options, &window_event_loop);
 
     // Start event loop and block until shutdown.
     let result = processor.run(window_event_loop);

@@ -5,7 +5,6 @@ use std::cmp;
 use std::fmt::{self, Formatter};
 use std::mem::{self, ManuallyDrop};
 use std::num::NonZeroU32;
-use std::ops::Deref;
 use std::time::{Duration, Instant};
 
 use glutin::config::GetGlConfig;
@@ -15,7 +14,7 @@ use glutin::error::ErrorKind;
 use glutin::prelude::*;
 use glutin::surface::{Surface, SwapInterval, WindowSurface};
 
-use log::{debug, info};
+use log::{debug, error, info};
 use parking_lot::MutexGuard;
 use serde::{Deserialize, Serialize};
 use winit::dpi::PhysicalSize;
@@ -185,11 +184,13 @@ impl From<SizeInfo<f32>> for SizeInfo<u32> {
 
 impl From<SizeInfo<f32>> for WindowSize {
     fn from(size_info: SizeInfo<f32>) -> Self {
+        let saturating_usize = |value| u16::try_from(value).unwrap_or(u16::MAX).max(1);
+        let saturating_f32 = |value: f32| value.clamp(1., f32::from(u16::MAX)) as u16;
         Self {
-            num_cols: size_info.columns() as u16,
-            num_lines: size_info.screen_lines() as u16,
-            cell_width: size_info.cell_width() as u16,
-            cell_height: size_info.cell_height() as u16,
+            num_cols: saturating_usize(size_info.columns()),
+            num_lines: saturating_usize(size_info.screen_lines()),
+            cell_width: saturating_f32(size_info.cell_width()),
+            cell_height: saturating_f32(size_info.cell_height()),
         }
     }
 }
@@ -227,7 +228,6 @@ impl<T: Clone + Copy> SizeInfo<T> {
 }
 
 impl SizeInfo<f32> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         width: f32,
         height: f32,
@@ -237,6 +237,10 @@ impl SizeInfo<f32> {
         mut padding_y: f32,
         dynamic_padding: bool,
     ) -> SizeInfo {
+        let width = width.max(1.);
+        let height = height.max(1.);
+        let cell_width = cell_width.max(1.);
+        let cell_height = cell_height.max(1.);
         if dynamic_padding {
             padding_x = Self::dynamic_padding(padding_x.floor(), width, cell_width);
             padding_y = Self::dynamic_padding(padding_y.floor(), height, cell_height);
@@ -274,6 +278,16 @@ impl SizeInfo<f32> {
             && x > self.padding_x as usize
             && y <= (self.padding_y + self.screen_lines as f32 * self.cell_height) as usize
             && y > self.padding_y as usize
+    }
+
+    #[inline]
+    pub fn drawable_width(&self) -> f32 {
+        (self.width - 2. * self.padding_x).max(1.)
+    }
+
+    #[inline]
+    pub fn drawable_height(&self) -> f32 {
+        (self.height - 2. * self.padding_y).max(1.)
     }
 
     /// Calculate padding to spread it evenly around the terminal content.
@@ -412,7 +426,7 @@ impl Display {
         let rasterizer = Rasterizer::new()?;
 
         let font_size = config.font.size().scale(scale_factor);
-        debug!("Loading \"{}\" font", &config.font.normal().family);
+        debug!("Loading \"{}\" font", config.font.normal().family);
         let font = config.font.clone().with_size(font_size);
         let mut glyph_cache = GlyphCache::new(rasterizer, &font)?;
 
@@ -478,7 +492,7 @@ impl Display {
         // On Wayland we can safely ignore this call, since the window isn't visible until you
         // actually draw something into it and commit those changes.
         if !is_wayland {
-            surface.swap_buffers(&context).expect("failed to swap buffers.");
+            surface.swap_buffers(&context)?;
             renderer.finish();
         }
 
@@ -493,7 +507,7 @@ impl Display {
         #[cfg(target_os = "macos")]
         window.focus_window();
 
-        #[allow(clippy::single_match)]
+        #[allow(clippy::single_match, reason = "additional match arms exist on other platforms")]
         #[cfg(not(windows))]
         if !_tabbed {
             match config.window.startup_mode {
@@ -548,12 +562,18 @@ impl Display {
     }
 
     pub fn make_not_current(&mut self) {
-        if self.context.is_current() {
-            self.context.make_not_current_in_place().expect("failed to disable context");
+        if self.context.is_current()
+            && let Err(err) = self.context.make_not_current_in_place()
+        {
+            error!("Failed to release GL context for window {:?}: {err}", self.window.id());
         }
     }
 
-    pub fn make_current(&mut self) {
+    #[allow(
+        clippy::expect_used,
+        reason = "a lost GL context leaves no viable old state; recovery must reconstruct atomically"
+    )]
+    pub fn make_current(&mut self) -> bool {
         let is_current = self.context.is_current();
 
         // Attempt to make the context current if it's not.
@@ -565,12 +585,19 @@ impl Display {
                     info!("Context lost for window {:?}", self.window.id());
                     true
                 },
-                _ => false,
+                Ok(()) => false,
+                Err(err) => {
+                    error!(
+                        "Failed to activate GL context for window {:?}: {err}",
+                        self.window.id()
+                    );
+                    return false;
+                },
             }
         };
 
         if !context_loss {
-            return;
+            return true;
         }
 
         let gl_display = self.context.display();
@@ -602,11 +629,12 @@ impl Display {
         self.damage_tracker.frame().mark_fully_damaged();
 
         debug!("Recovered window {:?} from gpu reset", self.window.id());
+        true
     }
 
     fn swap_buffers(&self) {
-        #[allow(clippy::single_match)]
-        let res = match (self.surface.deref(), &self.context.deref()) {
+        #[allow(clippy::single_match, reason = "additional match arms exist on other platforms")]
+        let res = match (&*self.surface, &&*self.context) {
             #[cfg(not(any(target_os = "macos", windows)))]
             (Surface::Egl(surface), PossiblyCurrentContext::Egl(context))
                 if matches!(self.raw_window_handle, RawWindowHandle::Wayland(_))
@@ -629,11 +657,11 @@ impl Display {
         glyph_cache: &mut GlyphCache,
         config: &UiConfig,
         font: &Font,
-    ) -> (f32, f32) {
-        let _ = glyph_cache.update_font_size(font);
+    ) -> Result<(f32, f32), crossfont::Error> {
+        glyph_cache.update_font_size(font)?;
 
         // Compute new cell sizes.
-        compute_cell_size(config, &glyph_cache.font_metrics())
+        Ok(compute_cell_size(config, &glyph_cache.font_metrics()))
     }
 
     /// Reset glyph cache.
@@ -663,22 +691,32 @@ impl Display {
         let (mut cell_width, mut cell_height) =
             (self.size_info.cell_width(), self.size_info.cell_height());
 
-        if pending_update.font().is_some() || pending_update.cursor_dirty() {
+        if pending_update.cursor_dirty() {
             let renderer_update = self.pending_renderer_update.get_or_insert(Default::default());
-            renderer_update.clear_font_cache = true
+            renderer_update.clear_font_cache = true;
         }
 
         // Update font size and cell dimensions.
         if let Some(font) = pending_update.font() {
-            let cell_dimensions = Self::update_font_size(&mut self.glyph_cache, config, font);
-            cell_width = cell_dimensions.0;
-            cell_height = cell_dimensions.1;
+            match Self::update_font_size(&mut self.glyph_cache, config, font) {
+                Ok(cell_dimensions) => {
+                    cell_width = cell_dimensions.0;
+                    cell_height = cell_dimensions.1;
+                    self.font_size = font.size();
+                    let renderer_update =
+                        self.pending_renderer_update.get_or_insert(Default::default());
+                    renderer_update.clear_font_cache = true;
 
-            info!("Cell size: {cell_width} x {cell_height}");
+                    info!("Cell size: {cell_width} x {cell_height}");
 
-            // Mark entire terminal as damaged since glyph size could change without cell size
-            // changes.
-            self.damage_tracker.frame().mark_fully_damaged();
+                    // Glyph size can change without changing cell dimensions.
+                    self.damage_tracker.frame().mark_fully_damaged();
+                },
+                Err(err) => {
+                    self.font_size = self.glyph_cache.font_size();
+                    error!("Unable to update font: {err}");
+                },
+            }
         }
 
         let (mut width, mut height) = (self.size_info.width(), self.size_info.height());
@@ -747,15 +785,17 @@ impl Display {
             _ => return,
         };
 
-        // Resize renderer.
-        if renderer_update.resize {
-            let width = NonZeroU32::new(self.size_info.width() as u32).unwrap();
-            let height = NonZeroU32::new(self.size_info.height() as u32).unwrap();
-            self.surface.resize(&self.context, width, height);
+        // Ensure we're modifying the correct OpenGL context.
+        if !self.make_current() {
+            return;
         }
 
-        // Ensure we're modifying the correct OpenGL context.
-        self.make_current();
+        // Resize renderer.
+        if renderer_update.resize {
+            let width = NonZeroU32::new(self.size_info.width() as u32).unwrap_or(NonZeroU32::MIN);
+            let height = NonZeroU32::new(self.size_info.height() as u32).unwrap_or(NonZeroU32::MIN);
+            self.surface.resize(&self.context, width, height);
+        }
 
         if renderer_update.clear_font_cache {
             self.reset_glyph_cache();
@@ -833,7 +873,9 @@ impl Display {
         self.damage_tracker.damage_selection(selection_range, display_offset);
 
         // Make sure this window's OpenGL context is active.
-        self.make_current();
+        if !self.make_current() {
+            return;
+        }
 
         self.renderer.clear(background_color, config.window_opacity());
         let mut lines = RenderLines::new();
@@ -890,7 +932,7 @@ impl Display {
         } else if search_state.regex().is_some() {
             // Show current display offset in vi-less search to indicate match position.
             self.draw_line_indicator(config, total_lines, None, display_offset);
-        };
+        }
 
         // Draw cursor.
         rects.extend(cursor.rects(&size_info, config.cursor.thickness()));
@@ -910,55 +952,52 @@ impl Display {
         }
 
         // Handle IME positioning and search bar rendering.
-        let ime_position = match search_state.regex() {
-            Some(regex) => {
-                let search_label = match search_state.direction() {
-                    Direction::Right => FORWARD_SEARCH_LABEL,
-                    Direction::Left => BACKWARD_SEARCH_LABEL,
-                };
+        let ime_position = if let Some(regex) = search_state.regex() {
+            let search_label = match search_state.direction() {
+                Direction::Right => FORWARD_SEARCH_LABEL,
+                Direction::Left => BACKWARD_SEARCH_LABEL,
+            };
 
-                let search_text = Self::format_search(regex, search_label, size_info.columns());
+            let search_text = Self::format_search(regex, search_label, size_info.columns());
 
-                // Render the search bar.
-                self.draw_search(config, &search_text);
+            // Render the search bar.
+            self.draw_search(config, &search_text);
 
-                // Draw search bar cursor.
-                let line = size_info.screen_lines();
-                let column = Column(search_text.chars().count() - 1);
+            // Draw search bar cursor.
+            let line = size_info.screen_lines();
+            let column = Column(search_text.chars().count() - 1);
 
-                // Add cursor to search bar if IME is not active.
-                if self.ime.preedit().is_none() {
-                    let fg = config.colors.footer_bar_foreground();
-                    let shape = CursorShape::Underline;
-                    let cursor_width = NonZeroU32::new(1).unwrap();
-                    let cursor =
-                        RenderableCursor::new(Point::new(line, column), shape, fg, cursor_width);
-                    rects.extend(cursor.rects(&size_info, config.cursor.thickness()));
-                }
+            // Add cursor to search bar if IME is not active.
+            if self.ime.preedit().is_none() {
+                let fg = config.colors.footer_bar_foreground();
+                let shape = CursorShape::Underline;
+                let cursor_width = NonZeroU32::MIN;
+                let cursor =
+                    RenderableCursor::new(Point::new(line, column), shape, fg, cursor_width);
+                rects.extend(cursor.rects(&size_info, config.cursor.thickness()));
+            }
 
-                Some(Point::new(line, column))
-            },
-            None => {
-                let num_lines = self.size_info.screen_lines();
-                match vi_cursor_viewport_point {
-                    None => term::point_to_viewport(display_offset, cursor_point)
-                        .filter(|point| point.line < num_lines),
-                    point => point,
-                }
-            },
+            Some(Point::new(line, column))
+        } else {
+            let num_lines = self.size_info.screen_lines();
+            match vi_cursor_viewport_point {
+                None => term::point_to_viewport(display_offset, cursor_point)
+                    .filter(|point| point.line < num_lines),
+                point => point,
+            }
         };
 
         // Handle IME.
-        if self.ime.is_enabled() {
-            if let Some(point) = ime_position {
-                let (fg, bg) = if search_state.regex().is_some() {
-                    (config.colors.footer_bar_foreground(), config.colors.footer_bar_background())
-                } else {
-                    (foreground_color, background_color)
-                };
+        if self.ime.is_enabled()
+            && let Some(point) = ime_position
+        {
+            let (fg, bg) = if search_state.regex().is_some() {
+                (config.colors.footer_bar_foreground(), config.colors.footer_bar_background())
+            } else {
+                (foreground_color, background_color)
+            };
 
-                self.draw_ime_preview(point, fg, bg, &mut rects, config);
-            }
+            self.draw_ime_preview(point, fg, bg, &mut rects, config);
         }
 
         if let Some(message) = message_buffer.message() {
@@ -1100,7 +1139,7 @@ impl Display {
         if highlighted_hint.is_some() {
             // If mouse changed the line, we should update the hyperlink preview, since the
             // highlighted hint could be disrupted by the old preview.
-            dirty = self.hint_mouse_point.is_some_and(|p| p.line != point.line);
+            dirty |= self.hint_mouse_point.is_some_and(|p| p.line != point.line);
             self.hint_mouse_point = Some(point);
             self.window.set_mouse_cursor(CursorIcon::Pointer);
         } else if self.highlighted_hint.is_some() {
@@ -1134,13 +1173,12 @@ impl Display {
         rects: &mut Vec<RenderRect>,
         config: &UiConfig,
     ) {
-        let preedit = match self.ime.preedit() {
-            Some(preedit) => preedit,
-            None => {
-                // In case we don't have preedit, just set the popup point.
-                self.window.update_ime_position(point, &self.size_info);
-                return;
-            },
+        let preedit = if let Some(preedit) = self.ime.preedit() {
+            preedit
+        } else {
+            // In case we don't have preedit, just set the popup point.
+            self.window.update_ime_position(point, &self.size_info);
+            return;
         };
 
         let num_cols = self.size_info.columns();
@@ -1188,7 +1226,7 @@ impl Display {
 
         // Add underline for preedit text.
         let underline = RenderLine { start, end, color: fg };
-        rects.extend(underline.rects(Flags::UNDERLINE, &metrics, &self.size_info));
+        underline.append_rects(rects, Flags::UNDERLINE, &metrics, &self.size_info);
 
         let ime_popup_point = match preedit.cursor_end_offset {
             Some(cursor_end_offset) => {
@@ -1198,7 +1236,7 @@ impl Display {
                 {
                     (CursorShape::HollowBlock, width)
                 } else {
-                    (CursorShape::Beam, NonZeroU32::new(1).unwrap())
+                    (CursorShape::Beam, NonZeroU32::MIN)
                 };
 
                 let cursor_column = Column(
@@ -1220,7 +1258,7 @@ impl Display {
         let label_len = search_label.len();
 
         // Skip `search_regex` formatting if only label is visible.
-        if label_len > max_width {
+        if label_len >= max_width {
             return search_label[..max_width].to_owned();
         }
 
@@ -1228,7 +1266,7 @@ impl Display {
         let mut bar_text = String::from(search_label);
         bar_text.extend(StrShortener::new(
             search_regex,
-            max_width.wrapping_sub(label_len + 1),
+            max_width - label_len - 1,
             ShortenDirection::Left,
             Some(SHORTENER),
         ));
@@ -1287,7 +1325,9 @@ impl Display {
                 }
             })
             .take(uris.len())
-            .flat_map(|line| term::point_to_viewport(display_offset, Point::new(line, Column(0))));
+            .filter_map(|line| {
+                term::point_to_viewport(display_offset, Point::new(line, Column(0)))
+            });
 
         let fg = config.colors.footer_bar_foreground();
         let bg = config.colors.footer_bar_background();
@@ -1462,9 +1502,11 @@ impl Drop for Display {
     fn drop(&mut self) {
         // Switch OpenGL context before dropping, otherwise objects (like programs) from other
         // contexts might be deleted when dropping renderer.
-        self.make_current();
+        let context_active = self.make_current();
         unsafe {
-            ManuallyDrop::drop(&mut self.renderer);
+            if context_active {
+                ManuallyDrop::drop(&mut self.renderer);
+            }
             ManuallyDrop::drop(&mut self.context);
             ManuallyDrop::drop(&mut self.surface);
         }
@@ -1485,7 +1527,7 @@ impl Ime {
     #[inline]
     pub fn set_enabled(&mut self, is_enabled: bool) {
         if is_enabled {
-            self.enabled = is_enabled
+            self.enabled = is_enabled;
         } else {
             // Clear state when disabling IME.
             *self = Default::default();
@@ -1590,8 +1632,9 @@ impl FrameTimer {
             // Redraw immediately if we haven't drawn in over `refresh_interval` microseconds.
             let elapsed_micros = (now - self.base).as_micros() as u64;
             let refresh_micros = self.refresh_interval.as_micros() as u64;
-            self.last_synced_timestamp =
-                now - Duration::from_micros(elapsed_micros % refresh_micros);
+            self.last_synced_timestamp = now
+                .checked_sub(Duration::from_micros(elapsed_micros % refresh_micros))
+                .unwrap_or(self.base);
             Duration::ZERO
         } else {
             // Redraw on the next `refresh_interval` clock tick.

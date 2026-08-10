@@ -7,7 +7,7 @@ use glutin::context::{
     ContextApi, ContextAttributesBuilder, GlProfile, NotCurrentContext, Robustness, Version,
 };
 use glutin::display::{Display, DisplayApiPreference, DisplayFeatures, GetGlDisplay};
-use glutin::error::Result as GlutinResult;
+use glutin::error::{ErrorKind, Result as GlutinResult};
 use glutin::prelude::*;
 use glutin::surface::{Surface, SurfaceAttributesBuilder, WindowSurface};
 use log::{LevelFilter, debug};
@@ -27,10 +27,13 @@ pub fn create_gl_display(
     let preference = DisplayApiPreference::Cgl;
 
     #[cfg(windows)]
+    let raw_window_handle = _raw_window_handle.ok_or(ErrorKind::BadNativeWindow)?;
+
+    #[cfg(windows)]
     let preference = if _prefer_egl {
-        DisplayApiPreference::EglThenWgl(Some(_raw_window_handle.unwrap()))
+        DisplayApiPreference::EglThenWgl(Some(raw_window_handle))
     } else {
-        DisplayApiPreference::WglThenEgl(Some(_raw_window_handle.unwrap()))
+        DisplayApiPreference::WglThenEgl(Some(raw_window_handle))
     };
 
     #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
@@ -80,14 +83,14 @@ pub fn pick_gl_config(
 
         if let Some(gl_config) = gl_config {
             debug!(
-                r#"Picked GL Config:
+                r"Picked GL Config:
   buffer_type: {:?}
   alpha_size: {}
   num_samples: {}
   hardware_accelerated: {:?}
   supports_transparency: {:?}
   config_api: {:?}
-  srgb_capable: {}"#,
+  srgb_capable: {}",
                 gl_config.color_buffer_type(),
                 gl_config.alpha_size(),
                 gl_config.num_samples(),
@@ -144,7 +147,7 @@ pub fn create_gl_context(
     }
 
     // If no context was built successfully, return an error for the most permissive one.
-    Err(error.unwrap())
+    Err(error.unwrap_or_else(|| ErrorKind::InitializationFailed.into()))
 }
 
 pub fn create_gl_surface(
@@ -159,8 +162,8 @@ pub fn create_gl_surface(
     let surface_attributes =
         SurfaceAttributesBuilder::<WindowSurface>::new().with_srgb(Some(false)).build(
             raw_window_handle,
-            NonZeroU32::new(size.width).unwrap(),
-            NonZeroU32::new(size.height).unwrap(),
+            NonZeroU32::new(size.width.max(1)).unwrap_or(NonZeroU32::MIN),
+            NonZeroU32::new(size.height.max(1)).unwrap_or(NonZeroU32::MIN),
         );
 
     // Create the GL surface to draw into.

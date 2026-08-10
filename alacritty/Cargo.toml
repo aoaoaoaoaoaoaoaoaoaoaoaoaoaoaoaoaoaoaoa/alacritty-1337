@@ -3,12 +3,15 @@ name = "alacritty"
 version = "0.18.0-dev"
 authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>"]
 license = "Apache-2.0"
-description = "A fast, cross-platform, OpenGL terminal emulator"
+description = "alacritty but it doesn't suck"
 readme = "README.md"
 homepage = "https://alacritty.org"
-repository = "https://github.com/alacritty/alacritty"
+repository = "https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337"
 edition.workspace = true
 rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies.alacritty_terminal]
 path = "../alacritty_terminal"
@@ -101,4 +104,3 @@ wayland = [
     "winit/wayland-dlopen",
     "winit/wayland-csd-adwaita-crossfont",
 ]
-nightly = []

@@ -76,7 +76,7 @@ impl Meter {
 
     /// Add a sample.
     ///
-    /// Used by Sampler::drop.
+    /// Used by `Sampler::drop`.
     fn add_sample(&mut self, sample: Duration) {
         let mut usec = 0f64;
 

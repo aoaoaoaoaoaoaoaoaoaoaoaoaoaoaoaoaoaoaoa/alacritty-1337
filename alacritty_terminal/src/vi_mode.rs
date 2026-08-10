@@ -122,7 +122,8 @@ impl ViModeCursor {
             },
             ViMotion::Middle => {
                 let display_offset = term.grid().display_offset() as i32;
-                let line = Line(-display_offset + term.screen_lines() as i32 / 2 - 1);
+                let middle = term.screen_lines().saturating_sub(1) / 2;
+                let line = Line(-display_offset + middle as i32);
                 let col = first_occupied_in_line(term, line).unwrap_or_default().column;
                 self.point = Point::new(line, col);
             },
@@ -510,6 +511,15 @@ mod tests {
 
         cursor = cursor.motion(&mut term, ViMotion::Low);
         assert_eq!(cursor.point, Point::new(Line(19), Column(0)));
+    }
+
+    #[test]
+    fn middle_of_single_line_is_visible() {
+        let size = TermSize::new(1, 1);
+        let mut term = Term::new(Config::default(), &size, VoidListener);
+        let cursor =
+            ViModeCursor::new(Point::new(Line(0), Column(0))).motion(&mut term, ViMotion::Middle);
+        assert_eq!(cursor.point, Point::new(Line(0), Column(0)));
     }
 
     #[test]

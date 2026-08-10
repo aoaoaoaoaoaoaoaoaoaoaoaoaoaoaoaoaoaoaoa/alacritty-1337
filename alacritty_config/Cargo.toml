@@ -5,9 +5,12 @@ authors = ["Christian Duerr <contact@christianduerr.com>"]
 license = "MIT OR Apache-2.0"
 description = "Alacritty configuration abstractions"
 homepage = "https://alacritty.org"
-repository = "https://github.com/alacritty/alacritty"
+repository = "https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337"
 edition.workspace = true
 rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 log = { version = "0.4.17", features = ["serde"] }

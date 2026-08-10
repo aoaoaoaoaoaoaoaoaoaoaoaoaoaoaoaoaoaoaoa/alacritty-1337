@@ -148,7 +148,7 @@ pub fn load(options: &mut Options) -> UiConfig {
 
 /// Attempt to reload the configuration file.
 pub fn reload(config_path: &Path, options: &mut Options) -> Result<UiConfig> {
-    debug!("Reloading configuration file: {config_path:?}");
+    debug!("Reloading configuration file: {}", config_path.display());
 
     // Load config, propagating errors.
     let mut config = load_from(config_path)?;
@@ -169,11 +169,11 @@ fn load_from(path: &Path) -> Result<UiConfig> {
     match read_config(path) {
         Ok(config) => Ok(config),
         Err(Error::Io(io)) if io.kind() == io::ErrorKind::NotFound => {
-            error!(target: LOG_TARGET_CONFIG, "Unable to load config {path:?}: File not found");
+            error!(target: LOG_TARGET_CONFIG, "Unable to load config {}: File not found", path.display());
             Err(Error::Io(io))
         },
         Err(err) => {
-            error!(target: LOG_TARGET_CONFIG, "Unable to load config {path:?}: {err}");
+            error!(target: LOG_TARGET_CONFIG, "Unable to load config {}: {err}", path.display());
             Err(err)
         },
     }
@@ -220,7 +220,8 @@ pub fn deserialize_config(path: &Path, warn_pruned: bool) -> Result<Value> {
     let extension = path.extension().unwrap_or_default();
     if (extension == "yaml" || extension == "yml") && !contents.trim().is_empty() {
         warn!(
-            "YAML config {path:?} is deprecated, please migrate to TOML using `alacritty migrate`"
+            "YAML config {} is deprecated, please migrate to TOML using `alacritty migrate`",
+            path.display(),
         );
 
         let mut value: serde_yaml::Value = serde_yaml::from_str(&contents)?;
@@ -264,11 +265,10 @@ fn load_imports(
         match parse_config(&path, config_paths, recursion_limit - 1) {
             Ok(config) => merged = serde_utils::merge(merged, config),
             Err(Error::Io(io)) if io.kind() == io::ErrorKind::NotFound => {
-                info!(target: LOG_TARGET_CONFIG, "Config import not found:\n  {:?}", path.display());
-                continue;
+                info!(target: LOG_TARGET_CONFIG, "Config import not found:\n  {}", path.display());
             },
             Err(err) => {
-                error!(target: LOG_TARGET_CONFIG, "Unable to import config {path:?}: {err}")
+                error!(target: LOG_TARGET_CONFIG, "Unable to import config {}: {err}", path.display());
             },
         }
     }
@@ -298,12 +298,11 @@ pub fn imports(
     let mut import_paths = Vec::new();
 
     for import in imports {
-        let path = match import {
-            Value::String(path) => PathBuf::from(path),
-            _ => {
-                import_paths.push(Err("Invalid import element type: expected path string".into()));
-                continue;
-            },
+        let path = if let Value::String(path) = import {
+            PathBuf::from(path)
+        } else {
+            import_paths.push(Err("Invalid import element type: expected path string".into()));
+            continue;
         };
 
         let normalized = normalize_import(base_path, path);
@@ -323,10 +322,10 @@ pub fn normalize_import(base_config_path: &Path, import_path: impl Into<PathBuf>
         import_path = home_dir.join(stripped);
     }
 
-    if import_path.is_relative() {
-        if let Some(base_config_dir) = base_config_path.parent() {
-            import_path = base_config_dir.join(import_path)
-        }
+    if import_path.is_relative()
+        && let Some(base_config_dir) = base_config_path.parent()
+    {
+        import_path = base_config_dir.join(import_path);
     }
 
     import_path
@@ -364,8 +363,8 @@ fn prune_yaml_nulls(value: &mut serde_yaml::Value, warn_pruned: bool) {
 /// Get the location of the first found default config file paths
 /// according to the following order:
 ///
-/// 1. $XDG_CONFIG_HOME/alacritty/alacritty.toml
-/// 2. $XDG_CONFIG_HOME/alacritty.toml
+/// 1. $`XDG_CONFIG_HOME/alacritty/alacritty.toml`
+/// 2. $`XDG_CONFIG_HOME/alacritty.toml`
 /// 3. $HOME/.config/alacritty/alacritty.toml
 /// 4. $HOME/.alacritty.toml
 /// 5. /etc/alacritty/alacritty.toml
@@ -444,9 +443,9 @@ window = "Hello""#
 
     #[test]
     fn empty_yaml_to_toml() {
-        let contents = r#"
+        let contents = r"
 
-        "#;
+        ";
         let toml = yaml_to_toml(contents);
         assert!(toml.is_empty());
     }

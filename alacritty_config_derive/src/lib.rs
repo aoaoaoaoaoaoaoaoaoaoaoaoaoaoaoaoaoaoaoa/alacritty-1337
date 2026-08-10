@@ -1,12 +1,21 @@
-#![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use)]
-#![cfg_attr(clippy, deny(warnings))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unwrap_used,
+        unused_crate_dependencies,
+        unused_results,
+        reason = "tests use deliberate failure shortcuts and discard fixture mutations"
+    )
+)]
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::parse::{self, Parse, ParseStream};
+use std::mem;
 use syn::punctuated::Punctuated;
-use syn::{GenericParam, Ident, LitStr, Token, TypeParam};
+use syn::{Attribute, Error, GenericParam, LitStr, Token, TypeParam};
 
 mod config_deserialize;
 mod serde_replace;
@@ -58,16 +67,83 @@ pub(crate) fn generics_streams<T>(params: &Punctuated<GenericParam, T>) -> Gener
     generics
 }
 
-/// Field attribute.
-pub(crate) struct Attr {
-    ident: String,
-    param: Option<LitStr>,
+#[derive(Default)]
+pub(crate) struct ConfigAttrs {
+    pub skip: bool,
+    pub flatten: bool,
+    pub aliases: Vec<LitStr>,
+    pub warning: Option<ConfigWarning>,
 }
 
-impl Parse for Attr {
-    fn parse(input: ParseStream<'_>) -> parse::Result<Self> {
-        let ident = input.parse::<Ident>()?.to_string();
-        let param = input.parse::<Token![=]>().and_then(|_| input.parse()).ok();
-        Ok(Self { ident, param })
+pub(crate) struct ConfigWarning {
+    pub kind: &'static str,
+    pub message: Option<LitStr>,
+}
+
+impl ConfigAttrs {
+    pub fn parse(attributes: &[Attribute]) -> syn::Result<Self> {
+        let mut parsed = Self::default();
+
+        for attribute in attributes.iter().filter(|attr| attr.path().is_ident("config")) {
+            attribute.parse_nested_meta(|meta| {
+                if meta.path.is_ident("skip") {
+                    if mem::replace(&mut parsed.skip, true) {
+                        return Err(meta.error("duplicate `skip` attribute"));
+                    }
+                    return Ok(());
+                }
+                if meta.path.is_ident("flatten") {
+                    if mem::replace(&mut parsed.flatten, true) {
+                        return Err(meta.error("duplicate `flatten` attribute"));
+                    }
+                    return Ok(());
+                }
+                if meta.path.is_ident("alias") {
+                    let alias = meta.value()?.parse::<LitStr>()?;
+                    if alias.value().trim().is_empty() {
+                        return Err(meta.error("alias must not be empty"));
+                    }
+                    if parsed.aliases.iter().any(|existing| existing.value() == alias.value()) {
+                        return Err(meta.error("duplicate alias"));
+                    }
+                    parsed.aliases.push(alias);
+                    return Ok(());
+                }
+
+                let kind = if meta.path.is_ident("deprecated") {
+                    "deprecated"
+                } else if meta.path.is_ident("removed") {
+                    "removed"
+                } else {
+                    return Err(meta.error("unknown config attribute"));
+                };
+                if parsed.warning.is_some() {
+                    return Err(meta.error("only one of `deprecated` or `removed` is allowed"));
+                }
+                let message = if meta.input.peek(Token![=]) {
+                    Some(meta.value()?.parse::<LitStr>()?)
+                } else {
+                    None
+                };
+                parsed.warning = Some(ConfigWarning { kind, message });
+                Ok(())
+            })?;
+        }
+
+        if parsed.skip && (parsed.flatten || !parsed.aliases.is_empty() || parsed.warning.is_some())
+        {
+            return Err(Error::new_spanned(
+                &attributes[0],
+                "`skip` cannot be combined with another config attribute",
+            ));
+        }
+        if parsed.flatten && (!parsed.aliases.is_empty() || parsed.warning.is_some()) {
+            return Err(Error::new_spanned(
+                &attributes[0],
+                "`flatten` cannot be combined with aliases or warnings",
+            ));
+        }
+
+        Ok(parsed)
     }
 }

@@ -87,15 +87,15 @@ impl HintState {
 
         // Add visible regex matches.
         if let Some(regex) = hint.content.regex.as_ref() {
-            regex.with_compiled(|regex| {
+            let _ = regex.with_compiled(|regex| {
                 let matches = visible_regex_match_iter(term, regex);
 
                 // Apply post-processing and search for sub-matches if necessary.
                 if hint.post_processing {
-                    let mut matches = matches.collect::<Vec<_>>();
-                    self.matches.extend(matches.drain(..).flat_map(|rm| {
-                        HintPostProcessor::new(term, regex, rm).collect::<Vec<_>>()
-                    }));
+                    let matches = matches.collect::<Vec<_>>();
+                    for regex_match in matches {
+                        self.matches.extend(HintPostProcessor::new(term, regex, regex_match));
+                    }
                 } else {
                     self.matches.extend(matches);
                 }
@@ -133,7 +133,7 @@ impl HintState {
         match c {
             // Use backspace to remove the last character pressed.
             '\x08' | '\x1f' => {
-                self.keys.pop();
+                let _ = self.keys.pop();
             },
             // Cancel hint highlighting on ESC/Ctrl+c.
             '\x1b' | '\x03' => self.stop(),
@@ -343,7 +343,7 @@ pub fn visible_unique_hyperlinks_iter<T>(term: &Term<T>) -> impl Iterator<Item =
         let (cell, hyperlink) = display_iter.find_map(|cell| {
             let hyperlink = cell.hyperlink()?;
             (!unique_hyperlinks.contains(&hyperlink)).then(|| {
-                unique_hyperlinks.insert(hyperlink.clone());
+                let _ = unique_hyperlinks.insert(hyperlink.clone());
                 (cell, hyperlink)
             })
         })?;
@@ -508,19 +508,17 @@ impl<'a, T> HintPostProcessor<'a, T> {
                 '[' => open_brackets += 1,
                 ')' => {
                     if open_parents == 0 {
-                        iter.prev();
+                        let _ = iter.prev();
                         break;
-                    } else {
-                        open_parents -= 1;
                     }
+                    open_parents -= 1;
                 },
                 ']' => {
                     if open_brackets == 0 {
-                        iter.prev();
+                        let _ = iter.prev();
                         break;
-                    } else {
-                        open_brackets -= 1;
                     }
+                    open_brackets -= 1;
                 },
                 _ => (),
             }
@@ -578,10 +576,10 @@ impl<T> Iterator for HintPostProcessor<'_, T> {
     fn next(&mut self) -> Option<Self::Item> {
         let next_match = self.next_match.take()?;
 
-        if self.start <= self.end {
-            if let Some(rm) = self.term.regex_search_right(self.regex, self.start, self.end) {
-                self.next_processed_match(rm);
-            }
+        if self.start <= self.end
+            && let Some(rm) = self.term.regex_search_right(self.regex, self.start, self.end)
+        {
+            self.next_processed_match(rm);
         }
 
         Some(next_match)

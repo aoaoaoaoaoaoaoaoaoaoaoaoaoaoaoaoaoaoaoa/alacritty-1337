@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Error as IoError, ErrorKind, Result as IoResult, Write};
 use std::net::Shutdown;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use crate::cli::{Options, SocketMessage};
 use crate::event::{Event, EventType};
 
 /// Environment variable name for the IPC socket path.
-const ALACRITTY_SOCKET_ENV: &str = "ALACRITTY_SOCKET";
+pub(crate) const ALACRITTY_SOCKET_ENV: &str = "ALACRITTY_SOCKET";
 
 /// IPC socket listener.
 pub struct IpcListener {
@@ -38,8 +39,6 @@ impl IpcListener {
         let socket = UnixListener::bind(path)?;
         socket.set_nonblocking(true)?;
 
-        // Register socket path as environment variable for `alacritty msg`.
-        unsafe { env::set_var(ALACRITTY_SOCKET_ENV, path.as_os_str()) };
         if options.daemon {
             println!("ALACRITTY_SOCKET={}; export ALACRITTY_SOCKET", path.display());
         }
@@ -57,7 +56,7 @@ impl IpcListener {
         match reader.read_line(&mut self.data) {
             Ok(0) | Err(_) => return Ok(()),
             Ok(_) => (),
-        };
+        }
 
         let message: SocketMessage = match serde_json::from_str(&self.data) {
             Ok(message) => message,
@@ -150,20 +149,31 @@ fn send_reply_fallible(stream: &mut UnixStream, message: SocketReply) -> IoResul
 }
 
 /// Directory for the IPC socket file.
-#[cfg(not(target_os = "macos"))]
-pub fn socket_dir() -> PathBuf {
-    xdg::BaseDirectories::with_prefix("alacritty")
+pub fn socket_dir() -> IoResult<PathBuf> {
+    #[cfg(not(target_os = "macos"))]
+    let xdg_runtime = xdg::BaseDirectories::with_prefix("alacritty")
         .get_runtime_directory()
         .map(ToOwned::to_owned)
-        .ok()
-        .and_then(|path| fs::create_dir_all(&path).map(|_| path).ok())
-        .unwrap_or_else(env::temp_dir)
-}
+        .ok();
+    #[cfg(target_os = "macos")]
+    let xdg_runtime = None;
 
-/// Directory for the IPC socket file.
-#[cfg(target_os = "macos")]
-pub fn socket_dir() -> PathBuf {
-    env::temp_dir()
+    let uid = unsafe { libc::geteuid() };
+    let path = xdg_runtime.unwrap_or_else(|| env::temp_dir().join(format!("alacritty-{uid}")));
+    fs::create_dir_all(&path)?;
+
+    let metadata = path.metadata()?;
+    if metadata.uid() != uid {
+        return Err(IoError::new(
+            ErrorKind::PermissionDenied,
+            format!("socket directory is owned by another user: {}", path.display()),
+        ));
+    }
+
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions)?;
+    Ok(path)
 }
 
 /// Find the IPC socket path.
@@ -172,7 +182,7 @@ fn find_socket(socket_path: Option<PathBuf>) -> IoResult<UnixStream> {
     if let Some(socket_path) = socket_path {
         // Ensure we inform the user about an invalid path.
         return UnixStream::connect(&socket_path).map_err(|err| {
-            let message = format!("invalid socket path {socket_path:?}");
+            let message = format!("invalid socket path {}", socket_path.display());
             IoError::new(err.kind(), message)
         });
     }
@@ -186,16 +196,20 @@ fn find_socket(socket_path: Option<PathBuf>) -> IoResult<UnixStream> {
     }
 
     // Search for sockets files.
-    for entry in fs::read_dir(socket_dir())?.filter_map(|entry| entry.ok()) {
+    for entry in fs::read_dir(socket_dir()?)?.filter_map(|entry| entry.ok()) {
         let path = entry.path();
 
         // Skip files that aren't Alacritty sockets.
         let socket_prefix = socket_prefix();
+        #[allow(
+            clippy::case_sensitive_file_extension_comparisons,
+            reason = "the socket suffix is a protocol marker, not a user file extension"
+        )]
         if path
             .file_name()
             .and_then(OsStr::to_str)
-            .filter(|file| file.starts_with(&socket_prefix) && file.ends_with(".sock"))
-            .is_none()
+            .as_ref()
+            .is_none_or(|file| !(file.starts_with(&socket_prefix) && file.ends_with(".sock")))
         {
             continue;
         }

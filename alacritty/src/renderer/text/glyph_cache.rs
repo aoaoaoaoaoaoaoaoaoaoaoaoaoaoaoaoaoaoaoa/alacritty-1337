@@ -63,7 +63,7 @@ pub struct GlyphCache {
     pub bold_italic_key: FontKey,
 
     /// Font size.
-    pub font_size: crossfont::Size,
+    pub font_size: Size,
 
     /// Font offset.
     font_offset: Delta<i8>,
@@ -107,7 +107,8 @@ impl GlyphCache {
         // Need to load at least one glyph for the face before calling metrics.
         // The glyph requested here ('m' at the time of writing) has no special
         // meaning.
-        rasterizer.get_glyph(GlyphKey { font_key: key, character: 'm', size: font.size() })?;
+        let _ =
+            rasterizer.get_glyph(GlyphKey { font_key: key, character: 'm', size: font.size() })?;
 
         let mut metrics = rasterizer.metrics(key, font.size())?;
         metrics.strikeout_position += font.glyph_offset.y as f32;
@@ -119,7 +120,7 @@ impl GlyphCache {
 
         // Cache all ascii characters.
         for i in 32u8..=126u8 {
-            self.get(GlyphKey { font_key: font, character: i as char, size }, loader, true);
+            let _ = self.get(GlyphKey { font_key: font, character: i as char, size }, loader, true);
         }
     }
 
@@ -204,7 +205,7 @@ impl GlyphCache {
         // Try to load glyph from cache.
         if let Some(glyph) = self.cache.get(&glyph_key) {
             return *glyph;
-        };
+        }
 
         // Rasterize the glyph using the built-in font for special characters or the user's font
         // for everything else.
@@ -232,7 +233,7 @@ impl GlyphCache {
                 } else {
                     // If no missing glyph was loaded yet, insert it as `\0`.
                     let glyph = self.load_glyph(loader, rasterized);
-                    self.cache.insert(missing_key, glyph);
+                    let _ = self.cache.insert(missing_key, glyph);
 
                     glyph
                 }
@@ -281,10 +282,6 @@ impl GlyphCache {
     /// NOTE: To reload the renderers's fonts [`Self::reset_glyph_cache`] should be called
     /// afterwards.
     pub fn update_font_size(&mut self, font: &Font) -> Result<(), crossfont::Error> {
-        // Update dpi scaling.
-        self.font_offset = font.offset;
-        self.glyph_offset = font.glyph_offset;
-
         // Recompute font keys.
         let (regular, bold, italic, bold_italic) =
             Self::compute_font_keys(font, &mut self.rasterizer)?;
@@ -294,6 +291,8 @@ impl GlyphCache {
         info!("Font size changed to {:?} px", font.size().as_px());
 
         self.font_size = font.size();
+        self.font_offset = font.offset;
+        self.glyph_offset = font.glyph_offset;
         self.font_key = regular;
         self.bold_key = bold;
         self.italic_key = italic;
@@ -304,8 +303,12 @@ impl GlyphCache {
         Ok(())
     }
 
-    pub fn font_metrics(&self) -> crossfont::Metrics {
+    pub fn font_metrics(&self) -> Metrics {
         self.metrics
+    }
+
+    pub fn font_size(&self) -> Size {
+        self.font_size
     }
 
     /// Prefetch glyphs that are almost guaranteed to be loaded anyways.

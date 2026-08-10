@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt::Write as _;
 
 use winit::event::{ElementState, KeyEvent};
 #[cfg(target_os = "macos")]
@@ -7,17 +8,16 @@ use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 #[cfg(target_os = "macos")]
 use winit::platform::macos::OptionAsAlt;
 
-use alacritty_terminal::event::EventListener;
 use alacritty_terminal::term::TermMode;
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::config::{Action, BindingKey, BindingMode, KeyBinding};
 use crate::display::window::ImeInhibitor;
 use crate::event::TYPING_SEARCH_DELAY;
-use crate::input::{ActionContext, Execute, Processor};
+use crate::input::{ActionContext, Processor};
 use crate::scheduler::{TimerId, Topic};
 
-impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
+impl<A: ActionContext> Processor<A> {
     /// Process key input.
     pub fn key_input(&mut self, key: KeyEvent) {
         // IME input will be applied on commit and shouldn't trigger key bindings.
@@ -236,12 +236,19 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
         for i in 0..self.ctx.config().hints.enabled.len() {
             let hint = &self.ctx.config().hints.enabled[i];
             let binding = match hint.binding.as_ref() {
-                Some(binding) => binding.key_binding(hint),
+                Some(binding) => binding,
                 None => continue,
             };
 
-            if let Some(action) = binding_action(binding) {
-                action.execute(&mut self.ctx);
+            let key = match (&binding.key, &logical_key) {
+                (BindingKey::Scancode(_), _) => BindingKey::Scancode(key.physical_key),
+                (_, code) => {
+                    BindingKey::Keycode { key: code.clone(), location: key.location.into() }
+                },
+            };
+            if binding.is_triggered_by(mode, mods, &key) {
+                *suppress_chars.get_or_insert(true) = true;
+                Action::Hint(hint.clone()).execute(&mut self.ctx);
             }
         }
 
@@ -307,7 +314,7 @@ fn build_sequence(key: KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8
         && (key.repeat || key.state == ElementState::Released);
 
     let context =
-        SequenceBuilder { mode, modifiers, kitty_seq, kitty_encode_all, kitty_event_type };
+        SequenceBuilder { mode, kitty_seq, kitty_encode_all, kitty_event_type, modifiers };
 
     let associated_text = key.text_with_all_modifiers().filter(|text| {
         mode.contains(TermMode::REPORT_ASSOCIATED_TEXT)
@@ -332,7 +339,7 @@ fn build_sequence(key: KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8
 
     // Add modifiers information.
     if kitty_event_type || !modifiers.is_empty() || associated_text.is_some() {
-        payload.push_str(&format!(";{}", modifiers.encode_esc_sequence()));
+        let _ = write!(payload, ";{}", modifiers.encode_esc_sequence());
     }
 
     // Push event type.
@@ -349,10 +356,10 @@ fn build_sequence(key: KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8
     if let Some(text) = associated_text {
         let mut codepoints = text.chars().map(u32::from);
         if let Some(codepoint) = codepoints.next() {
-            payload.push_str(&format!(";{codepoint}"));
+            let _ = write!(payload, ";{codepoint}");
         }
         for codepoint in codepoints {
-            payload.push_str(&format!(":{codepoint}"));
+            let _ = write!(payload, ":{codepoint}");
         }
     }
 
@@ -388,8 +395,8 @@ impl SequenceBuilder {
         if character.chars().count() == 1 {
             let shift = self.modifiers.contains(SequenceModifiers::SHIFT);
 
-            let ch = character.chars().next().unwrap();
-            let unshifted_ch = if shift { ch.to_lowercase().next().unwrap() } else { ch };
+            let ch = character.chars().next()?;
+            let unshifted_ch = if shift { ch.to_lowercase().next().unwrap_or(ch) } else { ch };
 
             let alternate_key_code = u32::from(ch);
             let mut unicode_key_code = u32::from(unshifted_ch);
@@ -397,10 +404,11 @@ impl SequenceBuilder {
             // Try to get the base for keys which change based on modifier, like `1` for `!`.
             //
             // However it should only be performed when `SHIFT` is pressed.
-            if shift && alternate_key_code == unicode_key_code {
-                if let Key::Character(unmodded) = key.key_without_modifiers().as_ref() {
-                    unicode_key_code = u32::from(unmodded.chars().next().unwrap_or(unshifted_ch));
-                }
+            if shift
+                && alternate_key_code == unicode_key_code
+                && let Key::Character(unmodded) = key.key_without_modifiers().as_ref()
+            {
+                unicode_key_code = u32::from(unmodded.chars().next().unwrap_or(unshifted_ch));
             }
 
             // NOTE: Base layouts are ignored, since winit doesn't expose this information
@@ -713,6 +721,6 @@ impl From<ModifiersState> for SequenceModifiers {
 fn is_control_character(text: &str) -> bool {
     // 0x7f (DEL) is included here since it has a dedicated control code (`^?`) which generally
     // does not match the reported text (`^H`), despite not technically being part of C0 or C1.
-    let codepoint = text.bytes().next().unwrap();
+    let Some(&codepoint) = text.as_bytes().first() else { return false };
     text.len() == 1 && (codepoint < 0x20 || (0x7f..=0x9f).contains(&codepoint))
 }

@@ -66,7 +66,7 @@ impl<'de, T: Deserialize<'de>> SerdeReplace for HashMap<String, T> {
 
         // Merge the two HashMaps, replacing existing values.
         for (key, value) in hashmap {
-            self.insert(key, value);
+            let _ = self.insert(key, value);
         }
 
         Ok(())

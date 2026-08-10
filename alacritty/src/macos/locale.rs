@@ -1,7 +1,10 @@
-#![allow(clippy::let_unit_value)]
+#![allow(
+    clippy::let_unit_value,
+    reason = "Objective-C message expressions use unit-valued bindings for ownership sequencing"
+)]
 
 use std::ffi::{CStr, CString};
-use std::{env, str};
+use std::str;
 
 use libc::{LC_ALL, LC_CTYPE, setlocale};
 use log::debug;
@@ -10,7 +13,7 @@ use objc2_foundation::{NSLocale, NSObjectProtocol};
 
 const FALLBACK_LOCALE: &str = "UTF-8";
 
-pub fn set_locale_environment() {
+pub fn set_locale_environment() -> Option<(String, String)> {
     let env_locale_c = CString::new("").unwrap();
     let env_locale_ptr = unsafe { setlocale(LC_ALL, env_locale_c.as_ptr()) };
     if !env_locale_ptr.is_null() {
@@ -19,7 +22,7 @@ pub fn set_locale_environment() {
         // Assume `C` locale means unchanged, since it is the default anyways.
         if env_locale != "C" {
             debug!("Using environment locale: {}", env_locale);
-            return;
+            return None;
         }
     }
 
@@ -37,12 +40,12 @@ pub fn set_locale_environment() {
         let fallback_locale_c = CString::new(FALLBACK_LOCALE).unwrap();
         unsafe { setlocale(LC_CTYPE, fallback_locale_c.as_ptr()) };
 
-        unsafe { env::set_var("LC_CTYPE", FALLBACK_LOCALE) };
+        Some(("LC_CTYPE".into(), FALLBACK_LOCALE.into()))
     } else {
         // Use system locale.
         debug!("Using system locale: {}", system_locale);
 
-        unsafe { env::set_var("LC_ALL", system_locale) };
+        Some(("LC_ALL".into(), system_locale))
     }
 }
 
@@ -61,7 +64,7 @@ fn system_locale() -> String {
     let is_country_code_supported: bool = locale.respondsToSelector(sel!(countryCode));
     if is_language_code_supported && is_country_code_supported {
         let language_code = locale.languageCode();
-        #[allow(deprecated)]
+        #[allow(deprecated, reason = "macOS exposes no nondeprecated equivalent on old targets")]
         if let Some(country_code) = locale.countryCode() {
             format!("{}_{}.UTF-8", language_code, country_code)
         } else {

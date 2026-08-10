@@ -6,9 +6,12 @@ license = "Apache-2.0"
 description = "Library for writing terminal emulators"
 readme = "../README.md"
 homepage = "https://alacritty.org"
-repository = "https://github.com/alacritty/alacritty"
+repository = "https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337"
 edition.workspace = true
 rust-version.workspace = true
+
+[lints]
+workspace = true
 
 [features]
 default = ["serde"]

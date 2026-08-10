@@ -1,10 +1,9 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::meta::ParseNestedMeta;
 use syn::{DataEnum, Generics, Ident};
 
-use crate::serde_replace;
+use crate::{ConfigAttrs, serde_replace};
 
 pub fn derive_deserialize(ident: Ident, generics: Generics, data_enum: DataEnum) -> TokenStream {
     let visitor = format_ident!("{}Visitor", ident);
@@ -12,15 +11,23 @@ pub fn derive_deserialize(ident: Ident, generics: Generics, data_enum: DataEnum)
     // Create match arm streams and get a list with all available values.
     let mut match_arms_stream = TokenStream2::new();
     let mut available_values = String::from("one of ");
-    for variant in data_enum.variants.iter().filter(|variant| {
-        // Skip deserialization for `#[config(skip)]` fields.
-        variant.attrs.iter().all(|attr| {
-            let is_skip = |meta: ParseNestedMeta| {
-                if meta.path.is_ident("skip") { Ok(()) } else { Err(meta.error("not skip")) }
-            };
-            !attr.path().is_ident("config") || attr.parse_nested_meta(is_skip).is_err()
-        })
-    }) {
+    for variant in &data_enum.variants {
+        let attributes = match ConfigAttrs::parse(&variant.attrs) {
+            Ok(attributes) => attributes,
+            Err(err) => return err.to_compile_error().into(),
+        };
+        if attributes.flatten || !attributes.aliases.is_empty() || attributes.warning.is_some() {
+            return syn::Error::new_spanned(
+                variant,
+                "enum variants support only `#[config(skip)]`",
+            )
+            .to_compile_error()
+            .into();
+        }
+        if attributes.skip {
+            continue;
+        }
+
         let variant_ident = &variant.ident;
         let variant_str = variant_ident.to_string();
         available_values = format!("{available_values}`{variant_str}`, ");

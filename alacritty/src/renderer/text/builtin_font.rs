@@ -1,6 +1,6 @@
 //! Hand-rolled drawing of unicode characters that need to fully cover their character area.
 
-use std::{cmp, mem, ops};
+use std::{cmp, mem};
 
 use crossfont::{BitmapBuffer, Metrics, RasterizedGlyph};
 
@@ -29,7 +29,7 @@ pub fn builtin_glyph(
     let mut glyph = match character {
         // Box drawing characters and block elements.
         '\u{2500}'..='\u{259f}' | '\u{1fb00}'..='\u{1fb3b}' | '\u{1fb82}'..='\u{1fb8b}' => {
-            box_drawing(character, metrics, offset)
+            box_drawing(character, metrics, offset)?
         },
         // Powerline symbols: '','','',''
         POWERLINE_TRIANGLE_LTR..=POWERLINE_ARROW_RTL => {
@@ -46,10 +46,8 @@ pub fn builtin_glyph(
     Some(glyph)
 }
 
-fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> RasterizedGlyph {
-    // Ensure that width and height is at least one.
-    let height = (metrics.line_height as i32 + offset.y as i32).max(1) as usize;
-    let width = (metrics.average_advance as i32 + offset.x as i32).max(1) as usize;
+fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> Option<RasterizedGlyph> {
+    let (width, height) = cell_dimensions(metrics, offset);
     let stroke_size = calculate_stroke_size(width);
     let heavy_stroke_size = stroke_size * 2;
 
@@ -64,8 +62,8 @@ fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> Raster
             let mut y_end = height as f32;
 
             let top = height as i32 + metrics.descent as i32 + stroke_size as i32;
-            let height = height + 2 * stroke_size;
-            let mut canvas = Canvas::new(width, height + 2 * stroke_size);
+            let height = height.checked_add(2 * stroke_size)?;
+            let mut canvas = Canvas::new(width, height)?;
 
             // The offset that we should take into account when drawing, since we've enlarged
             // buffer vertically by twice of that amount.
@@ -94,7 +92,7 @@ fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> Raster
             }
 
             let buffer = BitmapBuffer::Rgb(canvas.into_raw());
-            return RasterizedGlyph {
+            return Some(RasterizedGlyph {
                 character,
                 top,
                 left: 0,
@@ -102,9 +100,9 @@ fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> Raster
                 width: width as i32,
                 buffer,
                 advance: (width as i32, height as i32),
-            };
+            });
         },
-        _ => Canvas::new(width, height),
+        _ => Canvas::new(width, height)?,
     };
 
     match character {
@@ -460,132 +458,29 @@ fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> Raster
         },
         // Quadrants: '▖', '▗', '▘', '▙', '▚', '▛', '▜', '▝', '▞', '▟'.
         '\u{2596}'..='\u{259F}' => {
-            let x_center = canvas.x_center().round().max(1.);
             let y_center = canvas.y_center().round().max(1.);
-
-            let (w_second, h_second) = match character {
-                '\u{2598}' | '\u{2599}' | '\u{259a}' | '\u{259b}' | '\u{259c}' => {
-                    (x_center, y_center)
-                },
-                _ => (0., 0.),
-            };
-            let (w_first, h_first) = match character {
-                '\u{259b}' | '\u{259c}' | '\u{259d}' | '\u{259e}' | '\u{259f}' => {
-                    (x_center, y_center)
-                },
-                _ => (0., 0.),
-            };
-            let (w_third, h_third) = match character {
-                '\u{2596}' | '\u{2599}' | '\u{259b}' | '\u{259e}' | '\u{259f}' => {
-                    (x_center, y_center)
-                },
-                _ => (0., 0.),
-            };
-            let (w_fourth, h_fourth) = match character {
-                '\u{2597}' | '\u{2599}' | '\u{259a}' | '\u{259c}' | '\u{259f}' => {
-                    (x_center, y_center)
-                },
-                _ => (0., 0.),
-            };
-
-            // Second quadrant.
-            canvas.draw_rect(0., 0., w_second, h_second, COLOR_FILL);
-            // First quadrant.
-            canvas.draw_rect(x_center, 0., w_first, h_first, COLOR_FILL);
-            // Third quadrant.
-            canvas.draw_rect(0., y_center, w_third, h_third, COLOR_FILL);
-            // Fourth quadrant.
-            canvas.draw_rect(x_center, y_center, w_fourth, h_fourth, COLOR_FILL);
+            let masks: [u8; 10] =
+                [0b0100, 0b1000, 0b0001, 0b1101, 0b1001, 0b0111, 0b1011, 0b0010, 0b0110, 0b1110];
+            let mask = masks[character as usize - '\u{2596}' as usize];
+            canvas.draw_occupancy(mask, &[0., y_center, height as f32]);
         },
         // Sextants: '🬀', '🬁', '🬂', '🬃', '🬄', '🬅', '🬆', '🬇', '🬈', '🬉', '🬊', '🬋', '🬌', '🬍', '🬎',
         // '🬏', '🬐', '🬑', '🬒', '🬓', '🬔', '🬕', '🬖', '🬗', '🬘', '🬙', '🬚', '🬛', '🬜', '🬝', '🬞', '🬟',
         // '🬠', '🬡', '🬢', '🬣', '🬤', '🬥', '🬦', '🬧', '🬨', '🬩', '🬪', '🬫', '🬬', '🬭', '🬮', '🬯', '🬰',
         // '🬱', '🬲', '🬳', '🬴', '🬵', '🬶', '🬷', '🬸', '🬹', '🬺', '🬻'.
         '\u{1fb00}'..='\u{1fb3b}' => {
-            let x_center = canvas.x_center().round().max(1.);
             let y_third = (height as f32 / 3.).round().max(1.);
-            let y_last_third = height as f32 - 2. * y_third;
-
-            let (w_top_left, h_top_left) = match character {
-                '\u{1fb00}' | '\u{1fb02}' | '\u{1fb04}' | '\u{1fb06}' | '\u{1fb08}'
-                | '\u{1fb0a}' | '\u{1fb0c}' | '\u{1fb0e}' | '\u{1fb10}' | '\u{1fb12}'
-                | '\u{1fb15}' | '\u{1fb17}' | '\u{1fb19}' | '\u{1fb1b}' | '\u{1fb1d}'
-                | '\u{1fb1f}' | '\u{1fb21}' | '\u{1fb23}' | '\u{1fb25}' | '\u{1fb27}'
-                | '\u{1fb28}' | '\u{1fb2a}' | '\u{1fb2c}' | '\u{1fb2e}' | '\u{1fb30}'
-                | '\u{1fb32}' | '\u{1fb34}' | '\u{1fb36}' | '\u{1fb38}' | '\u{1fb3a}' => {
-                    (x_center, y_third)
-                },
-                _ => (0., 0.),
-            };
-            let (w_top_right, h_top_right) = match character {
-                '\u{1fb01}' | '\u{1fb02}' | '\u{1fb05}' | '\u{1fb06}' | '\u{1fb09}'
-                | '\u{1fb0a}' | '\u{1fb0d}' | '\u{1fb0e}' | '\u{1fb11}' | '\u{1fb12}'
-                | '\u{1fb14}' | '\u{1fb15}' | '\u{1fb18}' | '\u{1fb19}' | '\u{1fb1c}'
-                | '\u{1fb1d}' | '\u{1fb20}' | '\u{1fb21}' | '\u{1fb24}' | '\u{1fb25}'
-                | '\u{1fb28}' | '\u{1fb2b}' | '\u{1fb2c}' | '\u{1fb2f}' | '\u{1fb30}'
-                | '\u{1fb33}' | '\u{1fb34}' | '\u{1fb37}' | '\u{1fb38}' | '\u{1fb3b}' => {
-                    (x_center, y_third)
-                },
-                _ => (0., 0.),
-            };
-            let (w_mid_left, h_mid_left) = match character {
-                '\u{1fb03}' | '\u{1fb04}' | '\u{1fb05}' | '\u{1fb06}' | '\u{1fb0b}'
-                | '\u{1fb0c}' | '\u{1fb0d}' | '\u{1fb0e}' | '\u{1fb13}' | '\u{1fb14}'
-                | '\u{1fb15}' | '\u{1fb1a}' | '\u{1fb1b}' | '\u{1fb1c}' | '\u{1fb1d}'
-                | '\u{1fb22}' | '\u{1fb23}' | '\u{1fb24}' | '\u{1fb25}' | '\u{1fb29}'
-                | '\u{1fb2a}' | '\u{1fb2b}' | '\u{1fb2c}' | '\u{1fb31}' | '\u{1fb32}'
-                | '\u{1fb33}' | '\u{1fb34}' | '\u{1fb39}' | '\u{1fb3a}' | '\u{1fb3b}' => {
-                    (x_center, y_third)
-                },
-                _ => (0., 0.),
-            };
-            let (w_mid_right, h_mid_right) = match character {
-                '\u{1fb07}' | '\u{1fb08}' | '\u{1fb09}' | '\u{1fb0a}' | '\u{1fb0b}'
-                | '\u{1fb0c}' | '\u{1fb0d}' | '\u{1fb0e}' | '\u{1fb16}' | '\u{1fb17}'
-                | '\u{1fb18}' | '\u{1fb19}' | '\u{1fb1a}' | '\u{1fb1b}' | '\u{1fb1c}'
-                | '\u{1fb1d}' | '\u{1fb26}' | '\u{1fb27}' | '\u{1fb28}' | '\u{1fb29}'
-                | '\u{1fb2a}' | '\u{1fb2b}' | '\u{1fb2c}' | '\u{1fb35}' | '\u{1fb36}'
-                | '\u{1fb37}' | '\u{1fb38}' | '\u{1fb39}' | '\u{1fb3a}' | '\u{1fb3b}' => {
-                    (x_center, y_third)
-                },
-                _ => (0., 0.),
-            };
-            let (w_bottom_left, h_bottom_left) = match character {
-                '\u{1fb0f}' | '\u{1fb10}' | '\u{1fb11}' | '\u{1fb12}' | '\u{1fb13}'
-                | '\u{1fb14}' | '\u{1fb15}' | '\u{1fb16}' | '\u{1fb17}' | '\u{1fb18}'
-                | '\u{1fb19}' | '\u{1fb1a}' | '\u{1fb1b}' | '\u{1fb1c}' | '\u{1fb1d}'
-                | '\u{1fb2d}' | '\u{1fb2e}' | '\u{1fb2f}' | '\u{1fb30}' | '\u{1fb31}'
-                | '\u{1fb32}' | '\u{1fb33}' | '\u{1fb34}' | '\u{1fb35}' | '\u{1fb36}'
-                | '\u{1fb37}' | '\u{1fb38}' | '\u{1fb39}' | '\u{1fb3a}' | '\u{1fb3b}' => {
-                    (x_center, y_last_third)
-                },
-                _ => (0., 0.),
-            };
-            let (w_bottom_right, h_bottom_right) = match character {
-                '\u{1fb1e}' | '\u{1fb1f}' | '\u{1fb20}' | '\u{1fb21}' | '\u{1fb22}'
-                | '\u{1fb23}' | '\u{1fb24}' | '\u{1fb25}' | '\u{1fb26}' | '\u{1fb27}'
-                | '\u{1fb28}' | '\u{1fb29}' | '\u{1fb2a}' | '\u{1fb2b}' | '\u{1fb2c}'
-                | '\u{1fb2d}' | '\u{1fb2e}' | '\u{1fb2f}' | '\u{1fb30}' | '\u{1fb31}'
-                | '\u{1fb32}' | '\u{1fb33}' | '\u{1fb34}' | '\u{1fb35}' | '\u{1fb36}'
-                | '\u{1fb37}' | '\u{1fb38}' | '\u{1fb39}' | '\u{1fb3a}' | '\u{1fb3b}' => {
-                    (x_center, y_last_third)
-                },
-                _ => (0., 0.),
-            };
-
-            canvas.draw_rect(0., 0., w_top_left, h_top_left, COLOR_FILL);
-            canvas.draw_rect(x_center, 0., w_top_right, h_top_right, COLOR_FILL);
-            canvas.draw_rect(0., y_third, w_mid_left, h_mid_left, COLOR_FILL);
-            canvas.draw_rect(x_center, y_third, w_mid_right, h_mid_right, COLOR_FILL);
-            canvas.draw_rect(0., y_third * 2., w_bottom_left, h_bottom_left, COLOR_FILL);
-            canvas.draw_rect(x_center, y_third * 2., w_bottom_right, h_bottom_right, COLOR_FILL);
+            canvas.draw_occupancy(
+                sextant_mask(character),
+                &[0., y_third, 2. * y_third, height as f32],
+            );
         },
         _ => unreachable!(),
     }
 
     let top = height as i32 + metrics.descent as i32;
     let buffer = BitmapBuffer::Rgb(canvas.into_raw());
-    RasterizedGlyph {
+    Some(RasterizedGlyph {
         character,
         top,
         left: 0,
@@ -593,7 +488,7 @@ fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> Raster
         width: width as i32,
         buffer,
         advance: (width as i32, height as i32),
-    }
+    })
 }
 
 fn powerline_drawing(
@@ -601,11 +496,10 @@ fn powerline_drawing(
     metrics: &Metrics,
     offset: &Delta<i8>,
 ) -> Option<RasterizedGlyph> {
-    let height = (metrics.line_height as i32 + offset.y as i32) as usize;
-    let width = (metrics.average_advance as i32 + offset.x as i32) as usize;
+    let (width, height) = cell_dimensions(metrics, offset);
     let extra_thickness = calculate_stroke_size(width) as i32 - 1;
 
-    let mut canvas = Canvas::new(width, height);
+    let mut canvas = Canvas::new(width, height)?;
 
     let slope = 1;
     let top_y = 1;
@@ -645,10 +539,9 @@ fn powerline_drawing(
             if p1.0 as usize + 1 == width {
                 canvas.draw_rect(p1.0, p1.1, 1., p2.1 - p1.1 + 1., COLOR_FILL);
                 break;
-            } else {
-                canvas.draw_rect(p1.0, p1.1, 1., p3.1 - p1.1 + 1., COLOR_FILL);
-                canvas.draw_rect(p4.0, p4.1, 1., p2.1 - p4.1 + 1., COLOR_FILL);
             }
+            canvas.draw_rect(p1.0, p1.1, 1., p3.1 - p1.1 + 1., COLOR_FILL);
+            canvas.draw_rect(p4.0, p4.1, 1., p2.1 - p4.1 + 1., COLOR_FILL);
         }
     }
 
@@ -683,28 +576,6 @@ impl Pixel {
     }
 }
 
-impl ops::Add for Pixel {
-    type Output = Pixel;
-
-    fn add(self, rhs: Pixel) -> Self::Output {
-        let _r = self._r.saturating_add(rhs._r);
-        let _g = self._g.saturating_add(rhs._g);
-        let _b = self._b.saturating_add(rhs._b);
-        Pixel { _r, _g, _b }
-    }
-}
-
-impl ops::Div<u8> for Pixel {
-    type Output = Pixel;
-
-    fn div(self, rhs: u8) -> Self::Output {
-        let _r = self._r / rhs;
-        let _g = self._g / rhs;
-        let _b = self._b / rhs;
-        Pixel { _r, _g, _b }
-    }
-}
-
 /// Canvas which is used for simple line drawing operations.
 ///
 /// The coordinate system is the following:
@@ -731,9 +602,12 @@ struct Canvas {
 
 impl Canvas {
     /// Builds new `Canvas` for line drawing with the given `width` and `height` with default color.
-    fn new(width: usize, height: usize) -> Self {
-        let buffer = vec![Pixel::default(); width * height];
-        Self { width, height, buffer }
+    fn new(width: usize, height: usize) -> Option<Self> {
+        let len = width.checked_mul(height)?;
+        let mut buffer = Vec::new();
+        buffer.try_reserve_exact(len).ok()?;
+        buffer.resize(len, Pixel::default());
+        Some(Self { width, height, buffer })
     }
 
     /// Vertical center of the `Canvas`.
@@ -749,6 +623,28 @@ impl Canvas {
     /// Canvas underlying buffer for direct manipulation
     fn buffer_mut(&mut self) -> &mut [Pixel] {
         &mut self.buffer
+    }
+
+    /// Fill a two-column occupancy grid encoded from top-left to bottom-right.
+    fn draw_occupancy(&mut self, mask: u8, row_edges: &[f32]) {
+        let x_center = self.x_center().round().max(1.);
+        let x_edges = [0., x_center, self.width as f32];
+
+        for row in 0..row_edges.len() - 1 {
+            let top = row_edges[row].min(self.height as f32);
+            let bottom = row_edges[row + 1].clamp(top, self.height as f32);
+            for column in 0..2 {
+                if mask & (1 << (row * 2 + column)) != 0 {
+                    self.draw_rect(
+                        x_edges[column],
+                        top,
+                        x_edges[column + 1] - x_edges[column],
+                        bottom - top,
+                        COLOR_FILL,
+                    );
+                }
+            }
+        }
     }
 
     /// Gives bounds for horizontal straight line on `y` with `stroke_size`.
@@ -772,7 +668,7 @@ impl Canvas {
         for row in 0..self.height {
             for col in 0..self.width / 2 {
                 let index = row * self.width;
-                self.buffer.swap(index + col, index + self.width - col - 1)
+                self.buffer.swap(index + col, index + self.width - col - 1);
             }
         }
     }
@@ -791,10 +687,13 @@ impl Canvas {
 
     /// Draws a rect from the (`x`, `y`) of the given `width` and `height` using `color`.
     fn draw_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: Pixel) {
-        let start_x = x as usize;
-        let end_x = cmp::min((x + width) as usize, self.width);
-        let start_y = y as usize;
-        let end_y = cmp::min((y + height) as usize, self.height);
+        let start_x = (x as usize).min(self.width);
+        let end_x = ((x + width) as usize).min(self.width);
+        let start_y = (y as usize).min(self.height);
+        let end_y = ((y + height) as usize).min(self.height);
+        if start_x >= end_x || start_y >= end_y {
+            return;
+        }
         for y in start_y..end_y {
             let y = y * self.width;
             self.buffer[start_x + y..end_x + y].fill(color);
@@ -844,7 +743,7 @@ impl Canvas {
             self.put_pixel(ypxl1 + 1., xpxl1, color_2);
         } else {
             self.put_pixel(xpxl1, ypxl1, color_1);
-            self.put_pixel(xpxl1 + 1., ypxl1, color_2);
+            self.put_pixel(xpxl1, ypxl1 + 1., color_2);
         }
 
         let mut intery = y_end + gradient;
@@ -961,16 +860,39 @@ impl Canvas {
 
     /// Consumes `Canvas` and returns its underlying storage as raw byte vector.
     fn into_raw(self) -> Vec<u8> {
+        const {
+            assert!(size_of::<Pixel>() == 3);
+            assert!(align_of::<Pixel>() == 1);
+        }
         // SAFETY This is safe since we use `repr(packed)` on `Pixel` struct for underlying storage
         // of the `Canvas` buffer which consists of three u8 values.
         unsafe {
-            let capacity = self.buffer.capacity() * mem::size_of::<Pixel>();
-            let len = self.buffer.len() * mem::size_of::<Pixel>();
+            let capacity = self.buffer.capacity() * size_of::<Pixel>();
+            let len = self.buffer.len() * size_of::<Pixel>();
             let buf = self.buffer.as_ptr() as *mut u8;
             mem::forget(self.buffer);
             Vec::from_raw_parts(buf, len, capacity)
         }
     }
+}
+
+fn cell_dimensions(metrics: &Metrics, offset: &Delta<i8>) -> (usize, usize) {
+    let width = (metrics.average_advance as i32 + i32::from(offset.x)).max(1) as usize;
+    let height = (metrics.line_height as i32 + i32::from(offset.y)).max(1) as usize;
+    (width, height)
+}
+
+/// Return the six-cell occupancy mask assigned by Unicode to a sextant codepoint.
+fn sextant_mask(character: char) -> u8 {
+    let mut mask = (character as u32 - '\u{1fb00}' as u32 + 1) as u8;
+    // Empty/full blocks and the two checkerboards have pre-existing codepoints.
+    if mask >= 21 {
+        mask += 1;
+    }
+    if mask >= 42 {
+        mask += 1;
+    }
+    mask
 }
 
 /// Compute line width.
@@ -1006,7 +928,10 @@ mod tests {
         let glyph_offset = Default::default();
 
         // Test coverage of box drawing characters.
-        for character in ('\u{2500}'..='\u{259f}').chain('\u{1fb00}'..='\u{1fb3b}') {
+        for character in ('\u{2500}'..='\u{259f}')
+            .chain('\u{1fb00}'..='\u{1fb3b}')
+            .chain('\u{1fb82}'..='\u{1fb8b}')
+        {
             assert!(builtin_glyph(character, &METRICS, &offset, &glyph_offset).is_some());
         }
 
@@ -1028,5 +953,51 @@ mod tests {
         for character in ('\u{e0a0}'..'\u{e0b0}').chain('\u{e0b4}'..'\u{e0c0}') {
             assert!(builtin_glyph(character, &METRICS, &offset, &glyph_offset).is_none());
         }
+    }
+
+    #[test]
+    fn hostile_negative_offset_keeps_builtin_glyphs_finite() {
+        let offset = Delta { x: i8::MIN, y: i8::MIN };
+        let glyph_offset = Delta::default();
+
+        for character in [POWERLINE_TRIANGLE_LTR, '\u{2500}'] {
+            let glyph = builtin_glyph(character, &METRICS, &offset, &glyph_offset).unwrap();
+            assert_eq!((glyph.width, glyph.height), (1, 1));
+            match glyph.buffer {
+                BitmapBuffer::Rgb(buffer) => assert_eq!(buffer.len(), 3),
+                BitmapBuffer::Rgba(_) => panic!("built-in glyphs must use RGB buffers"),
+            }
+        }
+    }
+
+    #[test]
+    fn every_builtin_buffer_matches_declared_dimensions() {
+        let offset = Delta::default();
+        let glyph_offset = Delta::default();
+        let characters = ('\u{2500}'..='\u{259f}')
+            .chain('\u{1fb00}'..='\u{1fb3b}')
+            .chain('\u{1fb82}'..='\u{1fb8b}')
+            .chain(POWERLINE_TRIANGLE_LTR..=POWERLINE_ARROW_RTL);
+
+        for character in characters {
+            let glyph = builtin_glyph(character, &METRICS, &offset, &glyph_offset).unwrap();
+            let expected = glyph.width as usize * glyph.height as usize * 3;
+            match glyph.buffer {
+                BitmapBuffer::Rgb(buffer) => {
+                    assert_eq!(buffer.len(), expected, "buffer extent mismatch for {character:?}");
+                },
+                BitmapBuffer::Rgba(_) => panic!("built-in glyphs must use RGB buffers"),
+            }
+        }
+    }
+
+    #[test]
+    fn sextant_masks_skip_preexisting_unicode_patterns() {
+        assert_eq!(sextant_mask('\u{1fb00}'), 1);
+        assert_eq!(sextant_mask('\u{1fb13}'), 20);
+        assert_eq!(sextant_mask('\u{1fb14}'), 22);
+        assert_eq!(sextant_mask('\u{1fb27}'), 41);
+        assert_eq!(sextant_mask('\u{1fb28}'), 43);
+        assert_eq!(sextant_mask('\u{1fb3b}'), 62);
     }
 }

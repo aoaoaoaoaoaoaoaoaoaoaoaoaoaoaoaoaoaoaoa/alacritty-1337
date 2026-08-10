@@ -74,7 +74,7 @@ impl Atlas {
         let mut id: GLuint = 0;
         unsafe {
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
-            gl::GenTextures(1, &mut id);
+            gl::GenTextures(1, &raw mut id);
             gl::BindTexture(gl::TEXTURE_2D, id);
             // Use RGBA texture for both normal and emoji glyphs, since it has no performance
             // impact.
@@ -115,12 +115,8 @@ impl Atlas {
         self.row_tallest = 0;
     }
 
-    /// Insert a RasterizedGlyph into the texture atlas.
-    pub fn insert(
-        &mut self,
-        glyph: &RasterizedGlyph,
-        active_tex: &mut u32,
-    ) -> Result<Glyph, AtlasInsertError> {
+    /// Insert a `RasterizedGlyph` into the texture atlas.
+    pub fn insert(&mut self, glyph: &RasterizedGlyph) -> Result<Glyph, AtlasInsertError> {
         if glyph.width > self.width || glyph.height > self.height {
             return Err(AtlasInsertError::GlyphTooLarge);
         }
@@ -136,7 +132,7 @@ impl Atlas {
         }
 
         // There appears to be room; load the glyph.
-        Ok(self.insert_inner(glyph, active_tex))
+        Ok(self.insert_inner(glyph))
     }
 
     /// Insert the glyph without checking for room.
@@ -144,7 +140,7 @@ impl Atlas {
     /// Internal function for use once atlas has been checked for space. GL
     /// errors could still occur at this point if we were checking for them;
     /// hence, the Result.
-    fn insert_inner(&mut self, glyph: &RasterizedGlyph, active_tex: &mut u32) -> Glyph {
+    fn insert_inner(&mut self, glyph: &RasterizedGlyph) -> Glyph {
         let offset_y = self.row_baseline;
         let offset_x = self.row_extent;
         let height = glyph.height;
@@ -188,11 +184,10 @@ impl Atlas {
                 height,
                 format,
                 gl::UNSIGNED_BYTE,
-                buffer.as_ptr() as *const _,
+                buffer.as_ptr().cast(),
             );
 
             gl::BindTexture(gl::TEXTURE_2D, 0);
-            *active_tex = 0;
         }
 
         // Update Atlas state.
@@ -225,7 +220,7 @@ impl Atlas {
     pub fn room_in_row(&self, raw: &RasterizedGlyph) -> bool {
         let next_extent = self.row_extent + raw.width;
         let enough_width = next_extent <= self.width;
-        let enough_height = raw.height < (self.height - self.row_baseline);
+        let enough_height = raw.height <= self.height - self.row_baseline;
 
         enough_width && enough_height
     }
@@ -243,62 +238,88 @@ impl Atlas {
 
         Ok(())
     }
+}
 
-    /// Load a glyph into a texture atlas.
-    ///
-    /// If the current atlas is full, a new one will be created.
+/// Owns texture-atlas storage, insertion position, and GL texture-binding state.
+#[derive(Debug)]
+pub struct AtlasCache {
+    atlases: Vec<Atlas>,
+    current: usize,
+    active_texture: GLuint,
+}
+
+impl AtlasCache {
+    pub fn new(is_gles_context: bool) -> Self {
+        Self {
+            atlases: vec![Atlas::new(ATLAS_SIZE, is_gles_context)],
+            current: 0,
+            active_texture: 0,
+        }
+    }
+
+    /// Load a glyph, allocating another atlas only when every existing atlas is full.
     #[inline]
-    pub fn load_glyph(
-        active_tex: &mut GLuint,
-        atlas: &mut Vec<Atlas>,
-        current_atlas: &mut usize,
-        rasterized: &RasterizedGlyph,
-    ) -> Glyph {
-        // At least one atlas is guaranteed to be in the `self.atlas` list; thus
-        // the unwrap.
-        match atlas[*current_atlas].insert(rasterized, active_tex) {
-            Ok(glyph) => glyph,
-            Err(AtlasInsertError::Full) => {
-                // Get the context type before adding a new Atlas.
-                let is_gles_context = atlas[*current_atlas].is_gles_context;
+    pub fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
+        loop {
+            match self.atlases[self.current].insert(rasterized) {
+                Ok(glyph) => {
+                    // Atlas uploads leave texture zero bound.
+                    self.active_texture = 0;
+                    return glyph;
+                },
+                Err(AtlasInsertError::Full) => {
+                    let is_gles_context = self.atlases[self.current].is_gles_context;
 
-                // Advance the current Atlas index.
-                *current_atlas += 1;
-                if *current_atlas == atlas.len() {
-                    let new = Atlas::new(ATLAS_SIZE, is_gles_context);
-                    *active_tex = 0; // Atlas::new binds a texture. Ugh this is sloppy.
-                    atlas.push(new);
-                }
-                Atlas::load_glyph(active_tex, atlas, current_atlas, rasterized)
-            },
-            Err(AtlasInsertError::GlyphTooLarge) => Glyph {
-                tex_id: atlas[*current_atlas].id,
-                multicolor: false,
-                top: 0,
-                left: 0,
-                width: 0,
-                height: 0,
-                uv_bot: 0.,
-                uv_left: 0.,
-                uv_width: 0.,
-                uv_height: 0.,
-            },
+                    self.current += 1;
+                    if self.current == self.atlases.len() {
+                        self.atlases.push(Atlas::new(ATLAS_SIZE, is_gles_context));
+                        self.active_texture = 0;
+                    }
+                },
+                Err(AtlasInsertError::GlyphTooLarge) => {
+                    return Glyph {
+                        tex_id: self.atlases[self.current].id,
+                        multicolor: false,
+                        top: 0,
+                        left: 0,
+                        width: 0,
+                        height: 0,
+                        uv_bot: 0.,
+                        uv_left: 0.,
+                        uv_width: 0.,
+                        uv_height: 0.,
+                    };
+                },
+            }
         }
     }
 
     #[inline]
-    pub fn clear_atlas(atlas: &mut [Atlas], current_atlas: &mut usize) {
-        for atlas in atlas.iter_mut() {
+    pub fn clear(&mut self) {
+        self.atlases.truncate(1);
+        if let Some(atlas) = self.atlases.first_mut() {
             atlas.clear();
         }
-        *current_atlas = 0;
+        self.current = 0;
+        self.active_texture = 0;
+    }
+
+    pub fn bind_texture(&mut self, texture: GLuint) {
+        if self.active_texture == texture {
+            return;
+        }
+
+        unsafe {
+            gl::BindTexture(gl::TEXTURE_2D, texture);
+        }
+        self.active_texture = texture;
     }
 }
 
 impl Drop for Atlas {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteTextures(1, &self.id);
+            gl::DeleteTextures(1, &raw const self.id);
         }
     }
 }

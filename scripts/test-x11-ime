@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ${ALACRITTY_ISOLATED_X11:-} != 1 ]]; then
+    printf '%s\n' 'refusing to touch the live display; run through x11-gui-testing/isolated-x11' >&2
+    exit 64
+fi
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+    printf 'usage: %s ALACRITTY ARTIFACT_DIRECTORY [FCITX5_CONFIG]\n' "${0##*/}" >&2
+    exit 64
+fi
+
+binary=$(readlink -f -- "$1")
+artifacts=$2
+fcitx_config=${3:-}
+if [[ ! -x $binary ]]; then
+    printf 'not an executable: %s\n' "$binary" >&2
+    exit 66
+fi
+
+mkdir -p -- "$artifacts"
+probe=$artifacts/pty-input.txt
+alacritty_log=$artifacts/alacritty.log
+fcitx_log=$artifacts/fcitx5.log
+screenshot=$artifacts/after-ime-cycles.png
+: > "$probe"
+: > "$alacritty_log"
+: > "$fcitx_log"
+
+if [[ -n $fcitx_config ]]; then
+    mkdir -p -- "$XDG_CONFIG_HOME/fcitx5"
+    cp -a -- "$fcitx_config/." "$XDG_CONFIG_HOME/fcitx5/"
+fi
+
+alacritty_pid=
+fcitx_pid=
+cleanup() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    for pid in "$alacritty_pid" "$fcitx_pid"; do
+        if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then
+            kill -- "-$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+    exit "$status"
+}
+trap cleanup EXIT HUP INT TERM
+
+setsid fcitx5 -D --disable=wayland > "$fcitx_log" 2>&1 &
+fcitx_pid=$!
+for _ in {1..100}; do
+    if fcitx5-remote --check >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.05
+done
+fcitx5-remote --check >/dev/null
+fcitx5-remote -o
+
+setsid env XMODIFIERS=@im=fcitx "$binary" \
+    --title alacritty-1337-ime-probe \
+    -e /bin/sh -c '
+        probe=$1
+        printf "ready\n" > "$probe"
+        while IFS= read -r line; do
+            printf "%s\n" "$line" >> "$probe"
+            [ "$line" != quit ] || exit 0
+        done
+    ' probe-shell "$probe" > "$alacritty_log" 2>&1 &
+alacritty_pid=$!
+
+window=
+for _ in {1..200}; do
+    window=$(xdotool search --all --pid "$alacritty_pid" \
+        --name '^alacritty-1337-ime-probe$' 2>/dev/null | head -n 1 || true)
+    if [[ -n $window ]] && rg -Fxq ready "$probe"; then
+        break
+    fi
+    sleep 0.05
+done
+if [[ -z $window ]]; then
+    printf '%s\n' 'Alacritty did not publish its probe window' >&2
+    exit 1
+fi
+
+await_line() {
+    local line=$1
+    for _ in {1..100}; do
+        if rg -Fxq -- "$line" "$probe"; then
+            return
+        fi
+        sleep 0.05
+    done
+    printf 'PTY did not receive %q\n' "$line" >&2
+    exit 1
+}
+
+submit() {
+    xdotool type --window "$window" --clearmodifiers --delay 2 -- "$1"
+    xdotool key --window "$window" --clearmodifiers Return
+}
+
+xdotool windowfocus "$window"
+if [[ -n $fcitx_config ]]; then
+    fcitx5-remote -s keyboard-us
+fi
+submit before-ime-cycles
+await_line before-ime-cycles
+
+if [[ -n $fcitx_config ]]; then
+    fcitx5-remote -s keyboard-ru-phonetic
+    xdotool key --window "$window" --clearmodifiers t e s t Return
+    await_line тест
+
+    xdotool key --window "$window" --clearmodifiers alt+KP_Subtract
+    for _ in {1..100}; do
+        if [[ $(fcitx5-remote -n) == keyboard-us ]]; then
+            break
+        fi
+        sleep 0.05
+    done
+    if [[ $(fcitx5-remote -n) != keyboard-us ]]; then
+        printf '%s\n' 'the configured IME rotation shortcut did not select keyboard-us' >&2
+        exit 1
+    fi
+    submit rotation-shortcut-ok
+    await_line rotation-shortcut-ok
+
+    xdotool key --window "$window" --clearmodifiers super+semicolon
+    xdotool type --window "$window" --clearmodifiers --delay 2 -- ':smile:'
+    xdotool key --window "$window" --clearmodifiers space Return
+    await_line '😄'
+fi
+
+root=$(xwininfo -root | sed -n 's/.*Window id: \(0x[[:xdigit:]]*\).*/\1/p')
+for _ in {1..32}; do
+    xdotool key --window "$window" --clearmodifiers ctrl+shift+space
+    xdotool key --window "$window" --clearmodifiers i
+    xdotool windowfocus "$root"
+    xdotool windowfocus "$window"
+done
+
+submit after-ime-cycles
+await_line after-ime-cycles
+import -window "$window" "$screenshot"
+xdotool type --window "$window" --clearmodifiers --delay 2 -- quit
+xdotool key --window "$window" --clearmodifiers Return 2>/dev/null || true
+await_line quit
+
+for _ in {1..100}; do
+    if ! kill -0 "$alacritty_pid" 2>/dev/null; then
+        wait "$alacritty_pid"
+        alacritty_pid=
+        printf '%s\n' 'X11/fcitx5 keyboard delivery survived 32 vi/focus IME cycles.'
+        exit 0
+    fi
+    sleep 0.05
+done
+
+printf '%s\n' 'Alacritty did not exit after receiving quit' >&2
+exit 1

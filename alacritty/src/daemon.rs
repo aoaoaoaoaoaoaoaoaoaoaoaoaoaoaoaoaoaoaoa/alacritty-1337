@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 #[cfg(target_os = "openbsd")]
 use std::ffi::CStr;
 #[cfg(not(windows))]
@@ -33,7 +34,11 @@ use crate::macos;
 
 /// Start a new process in the background.
 #[cfg(windows)]
-pub fn spawn_daemon<I, S>(program: &str, args: I) -> io::Result<()>
+pub fn spawn_daemon<I, S>(
+    program: &str,
+    args: I,
+    environment: &HashMap<String, String>,
+) -> io::Result<()>
 where
     I: IntoIterator<Item = S> + Copy,
     S: AsRef<OsStr>,
@@ -44,6 +49,7 @@ where
     // console window.
     Command::new(program)
         .args(args)
+        .envs(environment)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -57,6 +63,7 @@ where
 pub fn spawn_daemon<I, S>(
     program: &str,
     args: I,
+    environment: &HashMap<String, String>,
     master_fd: RawFd,
     shell_pid: u32,
 ) -> io::Result<()>
@@ -65,7 +72,12 @@ where
     S: AsRef<OsStr>,
 {
     let mut command = Command::new(program);
-    command.args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    let _ = command
+        .args(args)
+        .envs(environment)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
 
     let working_directory = foreground_process_path(master_fd, shell_pid)
         .ok()
@@ -95,9 +107,11 @@ where
                     _ => libc::_exit(0),
                 }
 
-                // Copy foreground process' working directory, ignoring invalid paths.
-                if let Some(working_directory) = working_directory.as_ref() {
-                    libc::chdir(working_directory.as_ptr());
+                // Copy foreground process' working directory.
+                if let Some(working_directory) = working_directory.as_ref()
+                    && libc::chdir(working_directory.as_ptr()) == -1
+                {
+                    return Err(io::Error::last_os_error());
                 }
 
                 if libc::setsid() == -1 {

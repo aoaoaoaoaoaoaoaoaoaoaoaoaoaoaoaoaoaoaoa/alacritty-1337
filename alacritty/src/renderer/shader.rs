@@ -46,7 +46,7 @@ impl ShaderProgram {
             gl::AttachShader(program.id(), vertex_shader.id());
             gl::AttachShader(program.id(), fragment_shader.id());
             gl::LinkProgram(program.id());
-            gl::GetProgramiv(program.id(), gl::LINK_STATUS, &mut success);
+            gl::GetProgramiv(program.id(), gl::LINK_STATUS, &raw mut success);
         }
 
         if success != i32::from(gl::TRUE) {
@@ -114,7 +114,7 @@ impl Shader {
                 lengths.as_ptr(),
             );
             gl::CompileShader(shader.id());
-            gl::GetShaderiv(shader.id(), gl::COMPILE_STATUS, &mut success);
+            gl::GetShaderiv(shader.id(), gl::COMPILE_STATUS, &raw mut success);
         }
 
         if success == GLint::from(gl::TRUE) {
@@ -139,14 +139,14 @@ fn get_program_info_log(program: GLuint) -> String {
     // Get expected log length.
     let mut max_length: GLint = 0;
     unsafe {
-        gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, &mut max_length);
+        gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, &raw mut max_length);
     }
 
     // Read the info log.
     let mut actual_length: GLint = 0;
     let mut buf: Vec<u8> = Vec::with_capacity(max_length as usize);
     unsafe {
-        gl::GetProgramInfoLog(program, max_length, &mut actual_length, buf.as_mut_ptr() as *mut _);
+        gl::GetProgramInfoLog(program, max_length, &raw mut actual_length, buf.as_mut_ptr().cast());
     }
 
     // Build a string.
@@ -161,14 +161,14 @@ fn get_shader_info_log(shader: GLuint) -> String {
     // Get expected log length.
     let mut max_length: GLint = 0;
     unsafe {
-        gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut max_length);
+        gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &raw mut max_length);
     }
 
     // Read the info log.
     let mut actual_length: GLint = 0;
     let mut buf: Vec<u8> = Vec::with_capacity(max_length as usize);
     unsafe {
-        gl::GetShaderInfoLog(shader, max_length, &mut actual_length, buf.as_mut_ptr() as *mut _);
+        gl::GetShaderInfoLog(shader, max_length, &raw mut actual_length, buf.as_mut_ptr().cast());
     }
 
     // Build a string.

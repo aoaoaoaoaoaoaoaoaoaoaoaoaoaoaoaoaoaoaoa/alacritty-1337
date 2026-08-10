@@ -84,13 +84,12 @@ struct HyperlinkInner {
 
 impl HyperlinkInner {
     pub fn new<T: ToString>(id: Option<T>, uri: String) -> Self {
-        let id = match id {
-            Some(id) => id.to_string(),
-            None => {
-                let mut id = HYPERLINK_ID_SUFFIX.fetch_add(1, Ordering::Relaxed).to_string();
-                id.push_str("_alacritty");
-                id
-            },
+        let id = if let Some(id) = id {
+            id.to_string()
+        } else {
+            let mut id = HYPERLINK_ID_SUFFIX.fetch_add(1, Ordering::Relaxed).to_string();
+            id.push_str("_alacritty");
+            id
         };
 
         Self { id, uri }
@@ -235,7 +234,7 @@ impl GridCell for Cell {
                     | Flags::WIDE_CHAR_SPACER
                     | Flags::LEADING_WIDE_CHAR_SPACER,
             )
-            && self.extra.as_ref().map(|extra| extra.zerowidth.is_empty()) != Some(false)
+            && self.extra.as_ref().is_none_or(|extra| extra.zerowidth.is_empty())
     }
 
     #[inline]
@@ -276,8 +275,7 @@ impl LineLength for grid::Row<Cell> {
         }
 
         for (index, cell) in self[..].iter().rev().enumerate() {
-            if cell.c != ' '
-                || cell.extra.as_ref().map(|extra| extra.zerowidth.is_empty()) == Some(false)
+            if cell.c != ' ' || cell.extra.as_ref().is_some_and(|extra| !extra.zerowidth.is_empty())
             {
                 length = Column(self.len() - index);
                 break;
@@ -292,8 +290,6 @@ impl LineLength for grid::Row<Cell> {
 mod tests {
     use super::*;
 
-    use std::mem;
-
     use crate::grid::Row;
     use crate::index::Column;
 
@@ -303,7 +299,7 @@ mod tests {
         const EXPECTED_CELL_SIZE: usize = 24;
 
         // Ensure that cell size isn't growing by accident.
-        assert!(mem::size_of::<Cell>() <= EXPECTED_CELL_SIZE);
+        assert!(size_of::<Cell>() <= EXPECTED_CELL_SIZE);
     }
 
     #[test]
@@ -317,7 +313,7 @@ mod tests {
     #[test]
     fn line_length_works_with_wrapline() {
         let mut row = Row::<Cell>::new(10);
-        row[Column(9)].flags.insert(super::Flags::WRAPLINE);
+        row[Column(9)].flags.insert(Flags::WRAPLINE);
 
         assert_eq!(row.line_length(), Column(10));
     }

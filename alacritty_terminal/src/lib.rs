@@ -1,8 +1,17 @@
 //! Alacritty - The GPU Enhanced Terminal.
 
-#![warn(rust_2018_idioms, future_incompatible)]
-#![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use)]
-#![cfg_attr(clippy, deny(warnings))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unimplemented,
+        clippy::unwrap_used,
+        unused_crate_dependencies,
+        unused_results,
+        reason = "tests use deliberate failure shortcuts and discard fixture mutations"
+    )
+)]
 
 pub mod event;
 pub mod event_loop;

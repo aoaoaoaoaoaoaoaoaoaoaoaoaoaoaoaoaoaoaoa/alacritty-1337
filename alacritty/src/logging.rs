@@ -7,8 +7,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, LineWriter, Stdout, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use std::{env, process};
 
@@ -23,7 +22,7 @@ use crate::message_bar::{Message, MessageType};
 pub const LOG_TARGET_IPC_CONFIG: &str = "alacritty_log_window_config";
 
 /// Name for the environment variable containing the log file's path.
-const ALACRITTY_LOG_ENV: &str = "ALACRITTY_LOG";
+pub(crate) const ALACRITTY_LOG_ENV: &str = "ALACRITTY_LOG";
 
 /// Logging target for config error messages.
 pub const LOG_TARGET_CONFIG: &str = "alacritty_config_derive";
@@ -51,7 +50,6 @@ const ALLOWED_TARGETS: &[&str] = &[
     LOG_TARGET_IPC_CONFIG,
     LOG_TARGET_CONFIG,
     LOG_TARGET_WINIT,
-    "alacritty_config_derive",
     "alacritty_terminal",
     "alacritty",
     "crossfont",
@@ -191,7 +189,6 @@ fn is_allowed_target(level: Level, target: &str) -> bool {
 
 struct OnDemandLogFile {
     file: Option<LineWriter<File>>,
-    created: Arc<AtomicBool>,
     path: PathBuf,
 }
 
@@ -200,10 +197,7 @@ impl OnDemandLogFile {
         let mut path = env::temp_dir();
         path.push(format!("Alacritty-{}.log", process::id()));
 
-        // Set log path as an environment variable.
-        unsafe { env::set_var(ALACRITTY_LOG_ENV, path.as_os_str()) };
-
-        OnDemandLogFile { path, file: None, created: Arc::new(AtomicBool::new(false)) }
+        OnDemandLogFile { path, file: None }
     }
 
     fn file(&mut self) -> Result<&mut LineWriter<File>, io::Error> {
@@ -218,8 +212,7 @@ impl OnDemandLogFile {
 
             match file {
                 Ok(file) => {
-                    self.file = Some(io::LineWriter::new(file));
-                    self.created.store(true, Ordering::Relaxed);
+                    self.file = Some(LineWriter::new(file));
                     let _ =
                         writeln!(io::stdout(), "Created log file at \"{}\"", self.path.display());
                 },
@@ -230,7 +223,7 @@ impl OnDemandLogFile {
             }
         }
 
-        Ok(self.file.as_mut().unwrap())
+        self.file.as_mut().ok_or_else(|| io::Error::other("log file was not initialized"))
     }
 
     fn path(&self) -> &PathBuf {

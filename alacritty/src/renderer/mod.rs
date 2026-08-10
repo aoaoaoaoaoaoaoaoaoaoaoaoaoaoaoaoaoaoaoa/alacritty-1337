@@ -1,8 +1,6 @@
-use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fmt, ptr};
 
 use ahash::RandomState;
@@ -33,8 +31,8 @@ pub use text::{GlyphCache, LoaderApi};
 use shader::ShaderVersion;
 use text::{Gles2Renderer, Glsl3Renderer, TextRenderer};
 
-/// Whether the OpenGL functions have been loaded.
-pub static GL_FUNS_LOADED: AtomicBool = AtomicBool::new(false);
+/// Synchronizes publication of the process-global OpenGL function table.
+static GL_FUNS_LOADED: OnceLock<()> = OnceLock::new();
 
 #[derive(Debug)]
 pub enum Error {
@@ -92,16 +90,13 @@ pub struct Renderer {
     robustness: bool,
 }
 
-/// Wrapper around gl::GetString with error checking and reporting.
-fn gl_get_string(
-    string_id: gl::types::GLenum,
-    description: &str,
-) -> Result<Cow<'static, str>, Error> {
+/// Wrapper around `gl::GetString` with error checking and reporting.
+fn gl_get_string(string_id: gl::types::GLenum, description: &str) -> Result<String, Error> {
     unsafe {
         let string_ptr = gl::GetString(string_id);
         match gl::GetError() {
             gl::NO_ERROR if !string_ptr.is_null() => {
-                Ok(CStr::from_ptr(string_ptr as *const _).to_string_lossy())
+                Ok(CStr::from_ptr(string_ptr.cast()).to_string_lossy().into_owned())
             },
             gl::INVALID_ENUM => {
                 Err(format!("OpenGL error requesting {description}: invalid enum").into())
@@ -122,13 +117,14 @@ impl Renderer {
     ) -> Result<Self, Error> {
         // We need to load OpenGL functions once per instance, but only after we make our context
         // current due to WGL limitations.
-        if !GL_FUNS_LOADED.swap(true, Ordering::Relaxed) {
+        let _ = GL_FUNS_LOADED.get_or_init(|| {
             let gl_display = context.display();
             gl::load_with(|symbol| {
-                let symbol = CString::new(symbol).unwrap();
-                gl_display.get_proc_address(symbol.as_c_str()).cast()
+                CString::new(symbol).map_or(ptr::null(), |symbol| {
+                    gl_display.get_proc_address(symbol.as_c_str()).cast()
+                })
             });
-        }
+        });
 
         let shader_version = gl_get_string(gl::SHADING_LANGUAGE_VERSION, "shader version")?;
         let gl_version = gl_get_string(gl::VERSION, "OpenGL version")?;
@@ -138,7 +134,8 @@ impl Renderer {
         info!("OpenGL version {gl_version}, shader_version {shader_version}");
 
         // Check if robustness is supported.
-        let robustness = Self::supports_robustness();
+        let extensions = GlExtensions::load();
+        let robustness = Self::supports_robustness(&extensions);
 
         let is_gles_context = matches!(context.context_api(), ContextApi::Gles(_));
 
@@ -147,7 +144,7 @@ impl Renderer {
             Some(RendererPreference::Glsl3) => (true, true),
             Some(RendererPreference::Gles2) => (false, true),
             Some(RendererPreference::Gles2Pure) => (false, false),
-            None => (shader_version.as_ref() >= "3.3" && !is_gles_context, true),
+            None => (supports_glsl3(&shader_version) && !is_gles_context, true),
         };
 
         let (text_renderer, rect_renderer) = if use_glsl3 {
@@ -155,14 +152,17 @@ impl Renderer {
             let rect_renderer = RectRenderer::new(ShaderVersion::Glsl3)?;
             (text_renderer, rect_renderer)
         } else {
-            let text_renderer =
-                TextRendererProvider::Gles2(Gles2Renderer::new(allow_dsb, is_gles_context)?);
+            let text_renderer = TextRendererProvider::Gles2(Gles2Renderer::new(
+                allow_dsb,
+                is_gles_context,
+                &extensions,
+            )?);
             let rect_renderer = RectRenderer::new(ShaderVersion::Gles2)?;
             (text_renderer, rect_renderer)
         };
 
         // Enable debug logging for OpenGL as well.
-        if log::max_level() >= LevelFilter::Debug && GlExtensions::contains("GL_KHR_debug") {
+        if log::max_level() >= LevelFilter::Debug && extensions.contains("GL_KHR_debug") {
             debug!("Enabled debug logging for OpenGL");
             unsafe {
                 gl::Enable(gl::DEBUG_OUTPUT);
@@ -182,10 +182,10 @@ impl Renderer {
     ) {
         match &mut self.text_renderer {
             TextRendererProvider::Gles2(renderer) => {
-                renderer.draw_cells(size_info, glyph_cache, cells)
+                renderer.draw_cells(size_info, glyph_cache, cells);
             },
             TextRendererProvider::Glsl3(renderer) => {
-                renderer.draw_cells(size_info, glyph_cache, cells)
+                renderer.draw_cells(size_info, glyph_cache, cells);
             },
         }
     }
@@ -301,11 +301,14 @@ impl Renderer {
         }
     }
 
-    fn supports_robustness() -> bool {
+    fn supports_robustness(extensions: &GlExtensions) -> bool {
         let mut notification_strategy = 0;
-        if GlExtensions::contains("GL_KHR_robustness") {
+        if extensions.contains("GL_KHR_robustness") {
             unsafe {
-                gl::GetIntegerv(gl::RESET_NOTIFICATION_STRATEGY_KHR, &mut notification_strategy);
+                gl::GetIntegerv(
+                    gl::RESET_NOTIFICATION_STRATEGY_KHR,
+                    &raw mut notification_strategy,
+                );
             }
         } else {
             notification_strategy = gl::NO_RESET_NOTIFICATION_KHR as gl::types::GLint;
@@ -333,8 +336,8 @@ impl Renderer {
             gl::Viewport(
                 size.padding_x() as i32,
                 size.padding_y() as i32,
-                size.width() as i32 - 2 * size.padding_x() as i32,
-                size.height() as i32 - 2 * size.padding_y() as i32,
+                size.drawable_width() as i32,
+                size.drawable_height() as i32,
             );
         }
     }
@@ -349,41 +352,59 @@ impl Renderer {
     }
 }
 
-struct GlExtensions;
+struct GlExtensions(HashSet<String, RandomState>);
 
 impl GlExtensions {
-    /// Check if the given `extension` is supported.
-    ///
-    /// This function will lazily load OpenGL extensions.
-    fn contains(extension: &str) -> bool {
-        static OPENGL_EXTENSIONS: OnceLock<HashSet<&'static str, RandomState>> = OnceLock::new();
-
-        OPENGL_EXTENSIONS.get_or_init(Self::load_extensions).contains(extension)
+    fn contains(&self, extension: &str) -> bool {
+        self.0.contains(extension)
     }
 
     /// Load available OpenGL extensions.
-    fn load_extensions() -> HashSet<&'static str, RandomState> {
-        unsafe {
+    fn load() -> Self {
+        let extensions = unsafe {
             let extensions = gl::GetString(gl::EXTENSIONS);
 
             if extensions.is_null() {
                 let mut extensions_number = 0;
-                gl::GetIntegerv(gl::NUM_EXTENSIONS, &mut extensions_number);
+                gl::GetIntegerv(gl::NUM_EXTENSIONS, &raw mut extensions_number);
 
                 (0..extensions_number as gl::types::GLuint)
-                    .flat_map(|i| {
-                        let extension = CStr::from_ptr(gl::GetStringi(gl::EXTENSIONS, i) as *mut _);
-                        extension.to_str()
+                    .filter_map(|i| {
+                        let extension = gl::GetStringi(gl::EXTENSIONS, i);
+                        if extension.is_null() {
+                            return None;
+                        }
+                        CStr::from_ptr(extension.cast()).to_str().ok().map(str::to_owned)
                     })
                     .collect()
             } else {
-                match CStr::from_ptr(extensions as *mut _).to_str() {
-                    Ok(ext) => ext.split_whitespace().collect(),
-                    Err(_) => Default::default(),
-                }
+                CStr::from_ptr(extensions.cast())
+                    .to_string_lossy()
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect()
             }
-        }
+        };
+        Self(extensions)
     }
+}
+
+fn supports_glsl3(version: &str) -> bool {
+    version
+        .split_whitespace()
+        .find_map(parse_version)
+        .is_some_and(|(major, minor)| major > 3 || (major == 3 && minor >= 30))
+}
+
+fn parse_version(token: &str) -> Option<(u16, u16)> {
+    let (major, minor) = token.split_once('.')?;
+    let major = major.parse().ok()?;
+    let digits = minor.chars().take_while(char::is_ascii_digit).collect::<String>();
+    let mut minor: u16 = digits.parse().ok()?;
+    if digits.len() == 1 {
+        minor *= 10;
+    }
+    Some((major, minor))
 }
 
 extern "system" fn gl_debug_log(
@@ -397,4 +418,17 @@ extern "system" fn gl_debug_log(
 ) {
     let msg = unsafe { CStr::from_ptr(msg).to_string_lossy() };
     debug!("[gl_render] {msg}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glsl_versions_are_compared_numerically() {
+        assert!(!supports_glsl3("3.20"));
+        assert!(supports_glsl3("3.30 NVIDIA"));
+        assert!(supports_glsl3("OpenGL ES GLSL ES 4.60"));
+        assert!(supports_glsl3("10.0"));
+    }
 }

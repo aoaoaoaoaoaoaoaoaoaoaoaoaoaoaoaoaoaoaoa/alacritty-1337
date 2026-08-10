@@ -86,7 +86,7 @@ pub enum ChildEvent {
 
 /// A pseudoterminal (or PTY).
 ///
-/// This is a refinement of EventedReadWrite that also provides a channel through which we can be
+/// This is a refinement of `EventedReadWrite` that also provides a channel through which we can be
 /// notified if the PTY child process does something we care about (other than writing to the TTY).
 /// In particular, this allows for race-free child exit notification on UNIX (cf. `SIGCHLD`).
 pub trait EventedPty: EventedReadWrite {
@@ -96,16 +96,25 @@ pub trait EventedPty: EventedReadWrite {
     fn next_child_event(&mut self) -> Option<ChildEvent>;
 }
 
-/// Setup environment variables.
-pub fn setup_env() {
+/// Build the complete environment overlay for terminal children and launched commands.
+pub fn shell_environment(
+    configured: &HashMap<String, String>,
+    runtime: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut environment = HashMap::from([
+        ("COLORTERM".into(), "truecolor".into()),
+        ("TERM".into(), default_terminfo().into()),
+    ]);
+    environment.extend(configured.clone());
+    environment.extend(runtime.clone());
+    environment
+}
+
+fn default_terminfo() -> &'static str {
     // Default to 'alacritty' terminfo if it is available, otherwise
     // default to 'xterm-256color'. May be overridden by user's config
     // below.
-    let terminfo = if terminfo_exists("alacritty") { "alacritty" } else { "xterm-256color" };
-    unsafe { env::set_var("TERM", terminfo) };
-
-    // Advertise 24-bit color support.
-    unsafe { env::set_var("COLORTERM", "truecolor") };
+    if terminfo_exists("alacritty") { "alacritty" } else { "xterm-256color" }
 }
 
 /// Check if a terminfo entry exists on the system.

@@ -11,7 +11,7 @@ const CLOSE_BUTTON_PADDING: usize = 1;
 const MIN_FREE_LINES: usize = 3;
 const TRUNCATED_MESSAGE: &str = "[MESSAGE TRUNCATED]";
 
-/// Message for display in the MessageBuffer.
+/// Message for display in the `MessageBuffer`.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Message {
     text: String,
@@ -61,7 +61,7 @@ impl Message {
                 let mut new_line = String::new();
                 if let Some(index) = line.rfind(char::is_whitespace).filter(|_| !is_whitespace) {
                     let split = line.split_off(index + 1);
-                    line.pop();
+                    let _ = line.pop();
                     new_line = split;
                 }
 
@@ -83,26 +83,26 @@ impl Message {
                 line.push(' ');
             }
 
-            line_len += width
+            line_len += width;
         }
         lines.push(Self::pad_text(line, num_cols));
 
         // Truncate output if it's too long.
         if lines.len() > max_lines {
             lines.truncate(max_lines);
-            if TRUNCATED_MESSAGE.len() <= num_cols {
-                if let Some(line) = lines.iter_mut().last() {
-                    *line = Self::pad_text(TRUNCATED_MESSAGE.into(), num_cols);
-                }
+            if TRUNCATED_MESSAGE.len() <= num_cols
+                && let Some(line) = lines.iter_mut().last()
+            {
+                *line = Self::pad_text(TRUNCATED_MESSAGE.into(), num_cols);
             }
         }
 
         // Append close button to first line.
-        if button_len <= num_cols {
-            if let Some(line) = lines.get_mut(0) {
-                line.truncate(num_cols - button_len);
-                line.push_str(CLOSE_BUTTON_TEXT);
-            }
+        if button_len <= num_cols
+            && let Some(line) = lines.get_mut(0)
+        {
+            line.truncate(num_cols - button_len);
+            line.push_str(CLOSE_BUTTON_TEXT);
         }
 
         lines
@@ -162,18 +162,14 @@ impl MessageBuffer {
 
         // Remove all duplicates.
         if let Some(msg) = msg {
-            self.messages = self.messages.drain(..).filter(|m| m != &msg).collect();
+            self.messages.retain(|message| message != &msg);
         }
     }
 
     /// Remove all messages with a specific target.
     #[inline]
     pub fn remove_target(&mut self, target: &str) {
-        self.messages = self
-            .messages
-            .drain(..)
-            .filter(|m| m.target().map(String::as_str) != Some(target))
-            .collect();
+        self.messages.retain(|message| message.target().map(String::as_str) != Some(target));
     }
 
     /// Add a new message to the queue.
@@ -264,10 +260,10 @@ mod tests {
 
         let lines = message_buffer.message().unwrap().text(&size);
 
-        assert_eq!(lines, vec![
-            String::from("hahahahahahahahaha [X]"),
-            String::from("[MESSAGE TRUNCATED]   ")
-        ]);
+        assert_eq!(
+            lines,
+            vec![String::from("hahahahahahahahaha [X]"), String::from("[MESSAGE TRUNCATED]   ")]
+        );
     }
 
     #[test]
@@ -353,11 +349,10 @@ mod tests {
 
         let lines = message_buffer.message().unwrap().text(&size);
 
-        assert_eq!(lines, vec![
-            String::from("a [X]"),
-            String::from("bc   "),
-            String::from("defg ")
-        ]);
+        assert_eq!(
+            lines,
+            vec![String::from("a [X]"), String::from("bc   "), String::from("defg ")]
+        );
     }
 
     #[test]
@@ -369,11 +364,10 @@ mod tests {
 
         let lines = message_buffer.message().unwrap().text(&size);
 
-        assert_eq!(lines, vec![
-            String::from("ab  [X]"),
-            String::from("c 👩 d  "),
-            String::from("fgh    ")
-        ]);
+        assert_eq!(
+            lines,
+            vec![String::from("ab  [X]"), String::from("c 👩 d  "), String::from("fgh    ")]
+        );
     }
 
     #[test]

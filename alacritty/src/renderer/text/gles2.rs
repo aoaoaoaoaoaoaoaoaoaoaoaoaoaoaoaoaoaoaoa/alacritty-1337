@@ -13,7 +13,7 @@ use crate::gl::types::*;
 use crate::renderer::shader::{ShaderProgram, ShaderVersion};
 use crate::renderer::{Error, GlExtensions};
 
-use super::atlas::{ATLAS_SIZE, Atlas};
+use super::atlas::AtlasCache;
 use super::{
     Glyph, LoadGlyph, LoaderApi, RenderingGlyphFlags, RenderingPass, TextRenderApi,
     TextRenderBatch, TextRenderer, TextShader, glsl3,
@@ -29,20 +29,22 @@ pub struct Gles2Renderer {
     vao: GLuint,
     vbo: GLuint,
     ebo: GLuint,
-    atlas: Vec<Atlas>,
+    atlas: AtlasCache,
     batch: Batch,
-    current_atlas: usize,
-    active_tex: GLuint,
     dual_source_blending: bool,
 }
 
 impl Gles2Renderer {
-    pub fn new(allow_dsb: bool, is_gles_context: bool) -> Result<Self, Error> {
+    pub fn new(
+        allow_dsb: bool,
+        is_gles_context: bool,
+        extensions: &GlExtensions,
+    ) -> Result<Self, Error> {
         info!("Using OpenGL ES 2.0 renderer");
 
         let dual_source_blending = allow_dsb
-            && (GlExtensions::contains("GL_EXT_blend_func_extended")
-                || GlExtensions::contains("GL_ARB_blend_func_extended"));
+            && (extensions.contains("GL_EXT_blend_func_extended")
+                || extensions.contains("GL_ARB_blend_func_extended"));
 
         if is_gles_context {
             info!("Running on OpenGL ES context");
@@ -74,17 +76,17 @@ impl Gles2Renderer {
 
             gl::DepthMask(gl::FALSE);
 
-            gl::GenVertexArrays(1, &mut vao);
-            gl::GenBuffers(1, &mut ebo);
-            gl::GenBuffers(1, &mut vbo);
+            gl::GenVertexArrays(1, &raw mut vao);
+            gl::GenBuffers(1, &raw mut ebo);
+            gl::GenBuffers(1, &raw mut vbo);
             gl::BindVertexArray(vao);
 
             // Elements buffer.
             gl::BindBuffer(gl::ELEMENT_ARRAY_BUFFER, ebo);
             gl::BufferData(
                 gl::ELEMENT_ARRAY_BUFFER,
-                (vertex_indices.capacity() * size_of::<u16>()) as isize,
-                vertex_indices.as_ptr() as *const _,
+                (vertex_indices.len() * size_of::<u16>()) as isize,
+                vertex_indices.as_ptr().cast(),
                 gl::STATIC_DRAW,
             );
 
@@ -112,7 +114,10 @@ impl Gles2Renderer {
                     );
                     gl::EnableVertexAttribArray(index);
 
-                    #[allow(unused_assignments)]
+                    #[allow(
+                        unused_assignments,
+                        reason = "the macro advances an offset consumed by later expansions"
+                    )]
                     {
                         size += $count * size_of::<$type>();
                         index += 1;
@@ -149,10 +154,8 @@ impl Gles2Renderer {
             vao,
             vbo,
             ebo,
-            atlas: vec![Atlas::new(ATLAS_SIZE, is_gles_context)],
+            atlas: AtlasCache::new(is_gles_context),
             batch: Batch::new(),
-            current_atlas: 0,
-            active_tex: 0,
             dual_source_blending,
         })
     }
@@ -161,9 +164,9 @@ impl Gles2Renderer {
 impl Drop for Gles2Renderer {
     fn drop(&mut self) {
         unsafe {
-            gl::DeleteBuffers(1, &self.vbo);
-            gl::DeleteBuffers(1, &self.ebo);
-            gl::DeleteVertexArrays(1, &self.vao);
+            gl::DeleteBuffers(1, &raw const self.vbo);
+            gl::DeleteBuffers(1, &raw const self.ebo);
+            gl::DeleteVertexArrays(1, &raw const self.vao);
         }
     }
 }
@@ -190,10 +193,8 @@ impl<'a> TextRenderer<'a> for Gles2Renderer {
         }
 
         let res = func(RenderApi {
-            active_tex: &mut self.active_tex,
             batch: &mut self.batch,
             atlas: &mut self.atlas,
-            current_atlas: &mut self.current_atlas,
             program: &mut self.program,
             dual_source_blending: self.dual_source_blending,
         });
@@ -210,11 +211,7 @@ impl<'a> TextRenderer<'a> for Gles2Renderer {
     }
 
     fn loader_api(&mut self) -> LoaderApi<'_> {
-        LoaderApi {
-            active_tex: &mut self.active_tex,
-            atlas: &mut self.atlas,
-            current_atlas: &mut self.current_atlas,
-        }
+        LoaderApi { atlas: &mut self.atlas }
     }
 }
 
@@ -338,10 +335,8 @@ impl TextRenderBatch for Batch {
 
 #[derive(Debug)]
 pub struct RenderApi<'a> {
-    active_tex: &'a mut GLuint,
     batch: &'a mut Batch,
-    atlas: &'a mut Vec<Atlas>,
-    current_atlas: &'a mut usize,
+    atlas: &'a mut AtlasCache,
     program: &'a mut TextShaderProgram,
     dual_source_blending: bool,
 }
@@ -356,11 +351,11 @@ impl Drop for RenderApi<'_> {
 
 impl LoadGlyph for RenderApi<'_> {
     fn load_glyph(&mut self, rasterized: &RasterizedGlyph) -> Glyph {
-        Atlas::load_glyph(self.active_tex, self.atlas, self.current_atlas, rasterized)
+        self.atlas.load_glyph(rasterized)
     }
 
     fn clear(&mut self) {
-        Atlas::clear_atlas(self.atlas, self.current_atlas)
+        self.atlas.clear();
     }
 }
 
@@ -375,16 +370,11 @@ impl TextRenderApi<Batch> for RenderApi<'_> {
                 gl::ARRAY_BUFFER,
                 0,
                 self.batch.size() as isize,
-                self.batch.vertices.as_ptr() as *const _,
+                self.batch.vertices.as_ptr().cast(),
             );
         }
 
-        if *self.active_tex != self.batch.tex() {
-            unsafe {
-                gl::BindTexture(gl::TEXTURE_2D, self.batch.tex());
-            }
-            *self.active_tex = self.batch.tex();
-        }
+        self.atlas.bind_texture(self.batch.tex());
 
         unsafe {
             let num_indices = (self.batch.len() / 4 * 6) as i32;
@@ -466,7 +456,7 @@ pub struct TextShaderProgram {
     /// For dual source blending, there are 2 passes; one for background, another for text,
     /// similar to the GLSL3 renderer.
     ///
-    /// If GL_EXT_blend_func_extended is not available, the rendering is split into 4 passes.
+    /// If `GL_EXT_blend_func_extended` is not available, the rendering is split into 4 passes.
     /// One is used for the background and the rest to perform subpixel text rendering according to
     /// <https://github.com/servo/webrender/blob/master/webrender/doc/text-rendering.md>.
     ///

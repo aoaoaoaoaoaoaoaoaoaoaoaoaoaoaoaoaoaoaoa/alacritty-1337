@@ -1,3 +1,10 @@
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    unused_crate_dependencies,
+    unused_results,
+    reason = "reference-test failures must abort at the first malformed fixture or mismatch"
+)]
 #![cfg(feature = "serde")]
 use serde::Deserialize;
 use serde_json as json;
@@ -126,7 +133,7 @@ fn ref_test(dir: &Path) {
                 let cell = &term_grid[Line(i as i32)][Column(j)];
                 let original_cell = &grid[Line(i as i32)][Column(j)];
                 if original_cell != cell {
-                    println!("[{i}][{j}] {original_cell:?} => {cell:?}",);
+                    println!("[{i}][{j}] {original_cell:?} => {cell:?}");
                 }
             }
         }
