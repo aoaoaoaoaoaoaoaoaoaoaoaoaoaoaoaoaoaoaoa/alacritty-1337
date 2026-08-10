@@ -30,7 +30,7 @@ pub fn migrate(
     let new_path = path.with_extension("toml");
 
     // Apply TOML migration, without recursing through imports.
-    toml = migrate_toml(toml)?.to_string();
+    toml = migrate_toml(&toml)?.to_string();
 
     // Write migrated TOML config.
     write_results(options, &new_path, &toml)?;

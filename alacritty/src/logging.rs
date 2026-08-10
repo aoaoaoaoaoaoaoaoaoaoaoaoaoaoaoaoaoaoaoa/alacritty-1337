@@ -1,4 +1,4 @@
-//! Logging for Alacritty.
+//! Logging for alacritty-1337.
 //!
 //! The main executable is supposed to call `initialize()` exactly once during
 //! startup. All logging messages are written to stdout, given that their
@@ -45,7 +45,7 @@ fn extra_log_targets() -> &'static [String] {
     })
 }
 
-/// List of targets which will be logged by Alacritty.
+/// List of targets which will be logged by alacritty-1337.
 const ALLOWED_TARGETS: &[&str] = &[
     LOG_TARGET_IPC_CONFIG,
     LOG_TARGET_CONFIG,
@@ -97,15 +97,12 @@ impl Logger {
             _ => return,
         };
 
-        let event_proxy = match self.event_proxy.lock() {
-            Ok(event_proxy) => event_proxy,
-            Err(_) => return,
-        };
+        let Ok(event_proxy) = self.event_proxy.lock() else { return };
 
         #[cfg(not(windows))]
         let env_var = format!("${ALACRITTY_LOG_ENV}");
         #[cfg(windows)]
-        let env_var = format!("%{}%", ALACRITTY_LOG_ENV);
+        let env_var = format!("%{ALACRITTY_LOG_ENV}%");
 
         let message = format!(
             "[{}] {}\nSee log at {} ({})",
@@ -182,7 +179,7 @@ fn create_log_message(record: &log::Record<'_>, target: &str, start: Instant) ->
 /// Check if log messages from a crate should be logged.
 fn is_allowed_target(level: Level, target: &str) -> bool {
     match (level, log::max_level()) {
-        (Level::Error, LevelFilter::Trace) | (Level::Warn, LevelFilter::Trace) => true,
+        (Level::Error | Level::Warn, LevelFilter::Trace) => true,
         _ => ALLOWED_TARGETS.contains(&target) || extra_log_targets().iter().any(|t| t == target),
     }
 }
@@ -195,7 +192,7 @@ struct OnDemandLogFile {
 impl OnDemandLogFile {
     fn new() -> Self {
         let mut path = env::temp_dir();
-        path.push(format!("Alacritty-{}.log", process::id()));
+        path.push(format!("alacritty-1337-{}.log", process::id()));
 
         OnDemandLogFile { path, file: None }
     }

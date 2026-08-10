@@ -1,4 +1,4 @@
-//! Alacritty - The GPU Enhanced Terminal.
+//! alacritty-1337 - The GPU Enhanced Terminal.
 
 #![cfg_attr(
     test,

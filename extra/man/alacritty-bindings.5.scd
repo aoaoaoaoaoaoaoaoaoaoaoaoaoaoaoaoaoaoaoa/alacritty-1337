@@ -6,7 +6,7 @@ alacritty-bindings - Default configuration file bindings.
 
 # SYNOPSIS
 
-This page documents all key and mouse bindings for the default Alacritty
+This page documents all key and mouse bindings for the default alacritty-1337
 configuration. See *alacritty*(5) for full configuration format documentation.
 
 # MOUSE BINDINGS
@@ -601,9 +601,8 @@ configuration. See *alacritty*(5) for full configuration format documentation.
 
 # BUGS
 
-Found a bug? Please report it at _https://github.com/alacritty/alacritty/issues_.
+Found a bug? Please report it at _https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337/issues_.
 
 # MAINTAINERS
 
-- Christian Duerr <contact@christianduerr.com>
-- Kirill Chibisov <contact@kchibisov.com>
+- Eternalist <main@eternalist.moe>

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::hash::BuildHasher;
 use std::path::PathBuf;
 
 use log::LevelFilter;
@@ -59,10 +60,14 @@ impl<'de, T: SerdeReplace + Deserialize<'de>> SerdeReplace for Option<T> {
     }
 }
 
-impl<'de, T: Deserialize<'de>> SerdeReplace for HashMap<String, T> {
+impl<'de, T, S> SerdeReplace for HashMap<String, T, S>
+where
+    T: Deserialize<'de>,
+    S: BuildHasher + Default,
+{
     fn replace(&mut self, value: Value) -> Result<(), Box<dyn Error>> {
         // Deserialize replacement as HashMap.
-        let hashmap: HashMap<String, T> = Self::deserialize(value)?;
+        let hashmap = Self::deserialize(value)?;
 
         // Merge the two HashMaps, replacing existing values.
         for (key, value) in hashmap {

@@ -4,7 +4,7 @@ ASSETS_DIR = extra
 CARGO_PROFILE ?= release
 TARGET_DIR ?= $(shell cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')
 RELEASE_DIR = $(TARGET_DIR)/$(CARGO_PROFILE)
-VERSION = $(shell cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(next(package["version"] for package in json.load(sys.stdin)["packages"] if package["name"] == "alacritty"))')
+VERSION = $(shell cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(next(package["version"] for package in json.load(sys.stdin)["packages"] if package["name"] == "alacritty-1337"))')
 MANPAGE = $(ASSETS_DIR)/man/alacritty.1.scd
 MANPAGE-MSG = $(ASSETS_DIR)/man/alacritty-msg.1.scd
 MANPAGE-CONFIG = $(ASSETS_DIR)/man/alacritty.5.scd
@@ -16,15 +16,16 @@ COMPLETIONS = $(COMPLETIONS_DIR)/_alacritty \
 	$(COMPLETIONS_DIR)/alacritty.bash \
 	$(COMPLETIONS_DIR)/alacritty.fish
 
-APP_NAME = Alacritty.app
+APP_NAME = alacritty-1337.app
 APP_TEMPLATE = $(ASSETS_DIR)/osx/$(APP_NAME)
 APP_DIR = $(RELEASE_DIR)/osx
 APP_BINARY = $(RELEASE_DIR)/$(TARGET)
 APP_BINARY_DIR = $(APP_DIR)/$(APP_NAME)/Contents/MacOS
 APP_EXTRAS_DIR = $(APP_DIR)/$(APP_NAME)/Contents/Resources
 APP_COMPLETIONS_DIR = $(APP_EXTRAS_DIR)/completions
+APP_LICENSES_DIR = $(APP_EXTRAS_DIR)/licenses
 
-DMG_NAME = Alacritty.dmg
+DMG_NAME = alacritty-1337.dmg
 DMG_DIR = $(RELEASE_DIR)/osx
 
 vpath $(TARGET) $(RELEASE_DIR)
@@ -46,12 +47,13 @@ $(TARGET)-universal:
 	@mkdir -p $(RELEASE_DIR)
 	@lipo $(TARGET_DIR)/{x86_64,aarch64}-apple-darwin/$(CARGO_PROFILE)/$(TARGET) -create -output $(APP_BINARY)
 
-app: $(APP_NAME)-native ## Create an Alacritty.app
-app-universal: $(APP_NAME)-universal ## Create a universal Alacritty.app
+app: $(APP_NAME)-native ## Create an alacritty-1337.app
+app-universal: $(APP_NAME)-universal ## Create a universal alacritty-1337.app
 $(APP_NAME)-%: $(TARGET)-%
 	@mkdir -p $(APP_BINARY_DIR)
 	@mkdir -p $(APP_EXTRAS_DIR)
 	@mkdir -p $(APP_COMPLETIONS_DIR)
+	@mkdir -p $(APP_LICENSES_DIR)
 	@scdoc < $(MANPAGE) | gzip -9nc > $(APP_EXTRAS_DIR)/alacritty.1.gz
 	@scdoc < $(MANPAGE-MSG) | gzip -9nc > $(APP_EXTRAS_DIR)/alacritty-msg.1.gz
 	@scdoc < $(MANPAGE-CONFIG) | gzip -9nc > $(APP_EXTRAS_DIR)/alacritty.5.gz
@@ -60,20 +62,22 @@ $(APP_NAME)-%: $(TARGET)-%
 	@tic -xe alacritty,alacritty-direct -o $(APP_EXTRAS_DIR) $(TERMINFO)
 	@cp -fRp $(APP_TEMPLATE) $(APP_DIR)
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" $(APP_DIR)/$(APP_NAME)/Contents/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(VERSION)" $(APP_DIR)/$(APP_NAME)/Contents/Info.plist
 	@cp -fp $(APP_BINARY) $(APP_BINARY_DIR)
 	@cp -fp $(COMPLETIONS) $(APP_COMPLETIONS_DIR)
+	@cp -fp LICENSE-APACHE LICENSE-MIT $(APP_LICENSES_DIR)
 	@touch -r "$(APP_BINARY)" "$(APP_DIR)/$(APP_NAME)"
 	@codesign --remove-signature "$(APP_DIR)/$(APP_NAME)"
 	@codesign --force --deep --sign - "$(APP_DIR)/$(APP_NAME)"
 	@echo "Created '$(APP_NAME)' in '$(APP_DIR)'"
 
-dmg: $(DMG_NAME)-native ## Create an Alacritty.dmg
-dmg-universal: $(DMG_NAME)-universal ## Create a universal Alacritty.dmg
+dmg: $(DMG_NAME)-native ## Create an alacritty-1337.dmg
+dmg-universal: $(DMG_NAME)-universal ## Create a universal alacritty-1337.dmg
 $(DMG_NAME)-%: $(APP_NAME)-%
 	@echo "Packing disk image..."
 	@ln -sf /Applications $(DMG_DIR)/Applications
 	@hdiutil create $(DMG_DIR)/$(DMG_NAME) \
-		-volname "Alacritty" \
+		-volname "alacritty-1337" \
 		-fs HFS+ \
 		-srcfolder $(APP_DIR) \
 		-imagekey zlib-level=9 \

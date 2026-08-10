@@ -13,8 +13,8 @@ use alacritty_config_derive::{ConfigDeserialize, SerdeReplace};
 use crate::config::LOG_TARGET_CONFIG;
 use crate::config::ui_config::{Delta, Percentage};
 
-/// Default Alacritty name, used for window title and class.
-pub const DEFAULT_NAME: &str = "Alacritty";
+/// Default product name, used for window title and class.
+pub const DEFAULT_NAME: &str = "alacritty-1337";
 
 #[derive(ConfigDeserialize, Serialize, Debug, Clone, PartialEq)]
 pub struct WindowConfig {
@@ -208,8 +208,8 @@ pub struct Class {
 }
 
 impl Class {
-    pub fn new(general: impl ToString, instance: impl ToString) -> Self {
-        Self { general: general.to_string(), instance: instance.to_string() }
+    pub fn new(general: impl Into<String>, instance: impl Into<String>) -> Self {
+        Self { general: general.into(), instance: instance.into() }
     }
 }
 

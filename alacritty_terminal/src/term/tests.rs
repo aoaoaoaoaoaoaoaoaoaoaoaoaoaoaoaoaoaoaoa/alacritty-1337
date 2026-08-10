@@ -399,7 +399,7 @@ fn grow_lines_updates_active_cursor_pos() {
 
     // Increase visible lines.
     size.screen_lines = 30;
-    term.resize(size);
+    term.resize(&size);
 
     assert_eq!(term.history_size(), 0);
     assert_eq!(term.grid.cursor.point, Point::new(Line(19), Column(0)));
@@ -422,7 +422,7 @@ fn grow_lines_updates_inactive_cursor_pos() {
 
     // Increase visible lines.
     size.screen_lines = 30;
-    term.resize(size);
+    term.resize(&size);
 
     // Leave alt screen.
     term.unset_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
@@ -445,7 +445,7 @@ fn shrink_lines_updates_active_cursor_pos() {
 
     // Increase visible lines.
     size.screen_lines = 5;
-    term.resize(size);
+    term.resize(&size);
 
     assert_eq!(term.history_size(), 15);
     assert_eq!(term.grid.cursor.point, Point::new(Line(4), Column(0)));
@@ -468,7 +468,7 @@ fn shrink_lines_updates_inactive_cursor_pos() {
 
     // Increase visible lines.
     size.screen_lines = 5;
-    term.resize(size);
+    term.resize(&size);
 
     // Leave alt screen.
     term.unset_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
@@ -731,7 +731,7 @@ fn full_damage() {
     term.reset_damage();
 
     let size = TermSize::new(10, 10);
-    term.resize(size);
+    term.resize(&size);
     assert!(term.damage.full);
 }
 

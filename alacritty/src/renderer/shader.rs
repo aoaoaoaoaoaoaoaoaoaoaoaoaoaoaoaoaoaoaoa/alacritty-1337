@@ -19,7 +19,7 @@ pub enum ShaderVersion {
 
 impl ShaderVersion {
     // Header to which we concatenate the entire shader. The newlines are required.
-    fn shader_header(&self) -> &'static str {
+    fn shader_header(self) -> &'static str {
         match self {
             Self::Glsl3 => "#version 330 core\n",
             Self::Gles2 => "#version 100\n#define GLES2_RENDERER\n",

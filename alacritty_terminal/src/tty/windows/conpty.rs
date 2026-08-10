@@ -38,7 +38,7 @@ const PIPE_CAPACITY: usize = crate::event_loop::READ_BUFFER_SIZE;
 /// bugfixes compared to the standard conpty that ships with Windows.
 ///
 /// The conpty.dll and OpenConsole.exe files will be searched in PATH and in
-/// the directory where Alacritty's executable is located.
+/// the directory where alacritty-1337's executable is located.
 type CreatePseudoConsoleFn =
     unsafe extern "system" fn(COORD, HANDLE, HANDLE, u32, *mut HPCON) -> HRESULT;
 type ResizePseudoConsoleFn = unsafe extern "system" fn(HPCON, COORD) -> HRESULT;
@@ -207,7 +207,7 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
     startup_info_ex.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
 
     // Setting this flag but leaving all the handles as default (null) ensures the
-    // PTY process does not inherit any handles from this Alacritty process.
+    // PTY process does not inherit any handles from this alacritty-1337 process.
     startup_info_ex.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
 
     let mut attr_list = ThreadAttributeList::new()?;
@@ -239,10 +239,10 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
             cmdline.as_mut_ptr(),
             ptr::null_mut(),
             ptr::null_mut(),
-            false as i32,
+            i32::from(false),
             creation_flags,
             custom_env_block_pointer,
-            cwd.as_ref().map_or_else(ptr::null, |s| s.as_ptr()),
+            cwd.as_ref().map_or_else(ptr::null, Vec::as_ptr),
             &raw mut startup_info_ex.StartupInfo,
             &raw mut proc_info,
         );
@@ -276,14 +276,14 @@ fn convert_custom_env(custom_env: &HashMap<String, String>) -> Result<Option<Vec
 
     let mut environment = BTreeMap::new();
     for (inherited_key, inherited_value) in std::env::vars_os() {
-        insert_environment(&mut environment, inherited_key, inherited_value)?;
+        insert_environment(&mut environment, &inherited_key, &inherited_value)?;
     }
     // Configuration wins over inherited variables, case-insensitively.
     for (key, value) in custom_env {
         if key.is_empty() || key.contains('=') {
             return Err(Error::new(ErrorKind::InvalidInput, "invalid environment variable name"));
         }
-        insert_environment(&mut environment, OsString::from(key), OsString::from(value))?;
+        insert_environment(&mut environment, OsStr::new(key), OsStr::new(value))?;
     }
 
     let mut converted_block = Vec::new();
@@ -306,11 +306,11 @@ fn convert_custom_env(custom_env: &HashMap<String, String>) -> Result<Option<Vec
 // > name=value\0
 fn insert_environment(
     environment: &mut BTreeMap<Vec<u16>, (Vec<u16>, Vec<u16>)>,
-    key: OsString,
-    value: OsString,
+    key: &OsStr,
+    value: &OsStr,
 ) -> Result<()> {
-    let key = encode_without_nul(&key)?;
-    let value = encode_without_nul(&value)?;
+    let key = encode_without_nul(key)?;
+    let value = encode_without_nul(value)?;
     let folded = OsString::from_wide(&key).to_ascii_uppercase().encode_wide().collect();
     let _ = environment.insert(folded, (key, value));
     Ok(())

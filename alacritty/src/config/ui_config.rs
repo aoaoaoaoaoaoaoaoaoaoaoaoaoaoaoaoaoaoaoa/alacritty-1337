@@ -529,9 +529,9 @@ impl Serialize for LazyRegex {
     {
         let variant = self.0.borrow();
         let regex = match &*variant {
-            LazyRegexVariant::Compiled(regex, _) => regex,
-            LazyRegexVariant::Uncompilable(regex) => regex,
-            LazyRegexVariant::Pattern(regex) => regex,
+            LazyRegexVariant::Compiled(regex, _)
+            | LazyRegexVariant::Uncompilable(regex)
+            | LazyRegexVariant::Pattern(regex) => regex,
         };
         serializer.serialize_str(regex)
     }
@@ -641,8 +641,7 @@ pub enum Program {
 impl Program {
     pub fn program(&self) -> &str {
         match self {
-            Program::Just(program) => program,
-            Program::WithArgs { program, .. } => program,
+            Program::Just(program) | Program::WithArgs { program, .. } => program,
         }
     }
 
@@ -715,6 +714,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "0.5 is exactly representable and this asserts lossless projection"
+    )]
     fn percentage_rejects_non_finite_and_out_of_range_values() {
         for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
             assert!(Percentage::deserialize(toml::Value::Float(f64::from(value))).is_err());

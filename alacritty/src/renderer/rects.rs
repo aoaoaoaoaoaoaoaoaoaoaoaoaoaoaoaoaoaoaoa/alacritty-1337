@@ -319,7 +319,7 @@ impl RectRenderer {
         Ok(Self { vao, vbo, programs, vertices: Default::default() })
     }
 
-    pub fn draw(&mut self, size_info: &SizeInfo, metrics: &Metrics, rects: Vec<RenderRect>) {
+    pub fn draw(&mut self, size_info: &SizeInfo, metrics: &Metrics, rects: &[RenderRect]) {
         unsafe {
             // Bind VAO to enable vertex attribute slots.
             gl::BindVertexArray(self.vao);
@@ -332,8 +332,8 @@ impl RectRenderer {
         let half_height = size_info.height() / 2.;
 
         // Build rect vertices vector.
-        self.vertices.iter_mut().for_each(|vertices| vertices.clear());
-        for rect in &rects {
+        self.vertices.iter_mut().for_each(Vec::clear);
+        for rect in rects {
             Self::add_rect(&mut self.vertices[rect.kind as usize], half_width, half_height, rect);
         }
 

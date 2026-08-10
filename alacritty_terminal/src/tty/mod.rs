@@ -1,6 +1,7 @@
 //! TTY related functionality.
 
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::sync::Arc;
@@ -97,16 +98,20 @@ pub trait EventedPty: EventedReadWrite {
 }
 
 /// Build the complete environment overlay for terminal children and launched commands.
-pub fn shell_environment(
-    configured: &HashMap<String, String>,
-    runtime: &HashMap<String, String>,
-) -> HashMap<String, String> {
+pub fn shell_environment<ConfiguredHasher, RuntimeHasher>(
+    configured: &HashMap<String, String, ConfiguredHasher>,
+    runtime: &HashMap<String, String, RuntimeHasher>,
+) -> HashMap<String, String>
+where
+    ConfiguredHasher: BuildHasher,
+    RuntimeHasher: BuildHasher,
+{
     let mut environment = HashMap::from([
         ("COLORTERM".into(), "truecolor".into()),
         ("TERM".into(), default_terminfo().into()),
     ]);
-    environment.extend(configured.clone());
-    environment.extend(runtime.clone());
+    environment.extend(configured.iter().map(|(key, value)| (key.clone(), value.clone())));
+    environment.extend(runtime.iter().map(|(key, value)| (key.clone(), value.clone())));
     environment
 }
 

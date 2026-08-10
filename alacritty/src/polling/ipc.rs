@@ -1,4 +1,4 @@
-//! Alacritty socket IPC.
+//! alacritty-1337 socket IPC.
 
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
@@ -90,12 +90,12 @@ impl IpcListener {
     }
 }
 
-/// Send a message to the active Alacritty socket.
-pub fn send_message(socket: Option<PathBuf>, message: SocketMessage) -> IoResult<()> {
+/// Send a message to the active alacritty-1337 socket.
+pub fn send_message(socket: Option<PathBuf>, message: &SocketMessage) -> IoResult<()> {
     let mut socket = find_socket(socket)?;
 
     // Write message to socket.
-    let message_json = serde_json::to_string(&message)?;
+    let message_json = serde_json::to_string(message)?;
     socket.write_all(message_json.as_bytes())?;
     let _ = socket.flush();
 
@@ -103,7 +103,7 @@ pub fn send_message(socket: Option<PathBuf>, message: SocketMessage) -> IoResult
     socket.shutdown(Shutdown::Write)?;
 
     // Get matching IPC reply.
-    handle_reply(&socket, &message)?;
+    handle_reply(&socket, message)?;
 
     Ok(())
 }
@@ -134,15 +134,15 @@ fn handle_reply(stream: &UnixStream, message: &SocketMessage) -> IoResult<()> {
 }
 
 /// Send IPC message reply.
-pub fn send_reply(stream: &mut UnixStream, message: SocketReply) {
+pub fn send_reply(stream: &mut UnixStream, message: &SocketReply) {
     if let Err(err) = send_reply_fallible(stream, message) {
         error!("Failed to send IPC reply: {err}");
     }
 }
 
 /// Send IPC message reply, returning possible errors.
-fn send_reply_fallible(stream: &mut UnixStream, message: SocketReply) -> IoResult<()> {
-    let json = serde_json::to_string(&message).map_err(IoError::other)?;
+fn send_reply_fallible(stream: &mut UnixStream, message: &SocketReply) -> IoResult<()> {
+    let json = serde_json::to_string(message).map_err(IoError::other)?;
     stream.write_all(json.as_bytes())?;
     stream.flush()?;
     Ok(())
@@ -153,13 +153,13 @@ pub fn socket_dir() -> IoResult<PathBuf> {
     let uid = unsafe { libc::geteuid() };
 
     #[cfg(not(target_os = "macos"))]
-    let path = xdg::BaseDirectories::with_prefix("alacritty")
+    let path = xdg::BaseDirectories::with_prefix("alacritty-1337")
         .get_runtime_directory()
         .map(ToOwned::to_owned)
         .ok()
-        .unwrap_or_else(|| env::temp_dir().join(format!("alacritty-{uid}")));
+        .unwrap_or_else(|| env::temp_dir().join(format!("alacritty-1337-{uid}")));
     #[cfg(target_os = "macos")]
-    let path = env::temp_dir().join(format!("alacritty-{uid}"));
+    let path = env::temp_dir().join(format!("alacritty-1337-{uid}"));
 
     fs::create_dir_all(&path)?;
 
@@ -197,10 +197,10 @@ fn find_socket(socket_path: Option<PathBuf>) -> IoResult<UnixStream> {
     }
 
     // Search for sockets files.
-    for entry in fs::read_dir(socket_dir()?)?.filter_map(|entry| entry.ok()) {
+    for entry in fs::read_dir(socket_dir()?)?.filter_map(std::result::Result::ok) {
         let path = entry.path();
 
-        // Skip files that aren't Alacritty sockets.
+        // Skip files that aren't alacritty-1337 sockets.
         let socket_prefix = socket_prefix();
         #[allow(
             clippy::case_sensitive_file_extension_comparisons,
@@ -237,13 +237,13 @@ fn find_socket(socket_path: Option<PathBuf>) -> IoResult<UnixStream> {
 #[cfg(not(target_os = "macos"))]
 pub fn socket_prefix() -> String {
     let display = env::var("WAYLAND_DISPLAY").or_else(|_| env::var("DISPLAY")).unwrap_or_default();
-    format!("Alacritty-{}", display.replace('/', "-"))
+    format!("alacritty-1337-{}", display.replace('/', "-"))
 }
 
 /// File prefix matching all available sockets.
 #[cfg(target_os = "macos")]
 pub fn socket_prefix() -> String {
-    String::from("Alacritty")
+    String::from("alacritty-1337")
 }
 
 /// IPC socket replies.

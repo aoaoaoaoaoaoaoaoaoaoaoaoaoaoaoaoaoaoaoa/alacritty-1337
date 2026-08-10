@@ -36,7 +36,7 @@ impl RegexSearch {
         //
         // Bounds are based on Regex's meta engine:
         // https://github.com/rust-lang/regex/blob/061ee815ef2c44101dba7b0b124600fcb03c1912/regex-automata/src/meta/wrappers.rs#L581-L599
-        let has_uppercase = search.chars().any(|c| c.is_uppercase());
+        let has_uppercase = search.chars().any(char::is_uppercase);
         let syntax_config = SyntaxConfig::new().case_insensitive(!has_uppercase);
         let config =
             Config::new().minimum_cache_clear_count(Some(3)).minimum_bytes_per_state(Some(10));
@@ -493,10 +493,7 @@ impl<T> Term<T> {
             let cell = if forward { iter.next() } else { iter.prev() };
 
             // Break if there are no more cells
-            let cell = match cell {
-                Some(cell) => cell,
-                None => break,
-            };
+            let Some(cell) = cell else { break };
 
             // Check if the bracket matches
             if cell.c == end_char && skip_pairs == 0 {
@@ -964,13 +961,14 @@ mod tests {
 
     #[test]
     fn multiline() {
+        const PATTERN: &str = "[a-z]*";
+
         #[rustfmt::skip]
         let term = mock_term("\
             test \r\n\
             test\
         ");
 
-        const PATTERN: &str = "[a-z]*";
         let mut regex = RegexSearch::new(PATTERN).unwrap();
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(3));
@@ -987,10 +985,11 @@ mod tests {
 
     #[test]
     fn empty_match() {
+        const PATTERN: &str = "[a-z]*";
+
         #[rustfmt::skip]
         let term = mock_term(" abc ");
 
-        const PATTERN: &str = "[a-z]*";
         let mut regex = RegexSearch::new(PATTERN).unwrap();
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(4));
@@ -1001,10 +1000,11 @@ mod tests {
 
     #[test]
     fn empty_match_multibyte() {
+        const PATTERN: &str = "[a-z]*";
+
         #[rustfmt::skip]
         let term = mock_term(" ↑");
 
-        const PATTERN: &str = "[a-z]*";
         let mut regex = RegexSearch::new(PATTERN).unwrap();
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(1));
@@ -1013,10 +1013,11 @@ mod tests {
 
     #[test]
     fn empty_match_multiline() {
+        const PATTERN: &str = "[a-z]*";
+
         #[rustfmt::skip]
         let term = mock_term("abc          \nxxx");
 
-        const PATTERN: &str = "[a-z]*";
         let mut regex = RegexSearch::new(PATTERN).unwrap();
         let start = Point::new(Line(0), Column(3));
         let end = Point::new(Line(1), Column(2));

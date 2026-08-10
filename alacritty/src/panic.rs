@@ -11,13 +11,13 @@ use alacritty_terminal::tty::windows::win32_string;
 // dialog box as well as writes the panic to STDERR.
 pub fn attach_handler() {
     panic::set_hook(Box::new(|panic_info| {
-        let _ = writeln!(io::stderr(), "{}", panic_info);
-        let msg = format!("{}\n\nPress Ctrl-C to Copy", panic_info);
+        let _ = writeln!(io::stderr(), "{panic_info}");
+        let msg = format!("{panic_info}\n\nPress Ctrl-C to Copy");
         unsafe {
             let _ = MessageBoxW(
                 ptr::null_mut(),
                 win32_string(&msg).as_ptr(),
-                win32_string("Alacritty: Runtime Error").as_ptr(),
+                win32_string("alacritty-1337: Runtime Error").as_ptr(),
                 MB_ICONERROR | MB_OK | MB_SETFOREGROUND | MB_TASKMODAL,
             );
         }

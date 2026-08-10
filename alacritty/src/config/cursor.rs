@@ -67,7 +67,7 @@ impl Cursor {
             cmp::max(
                 // Show/hide is what we consider a cycle, so multiply by `2`.
                 Duration::from_millis(self.blink_interval * 2 * MIN_BLINK_CYCLES_BEFORE_PAUSE),
-                Duration::from_secs(self.blink_timeout as u64),
+                Duration::from_secs(u64::from(self.blink_timeout)),
             )
         }
     }
@@ -93,7 +93,7 @@ impl Default for ConfigCursorStyle {
 
 impl ConfigCursorStyle {
     /// Check if blinking is force enabled/disabled.
-    pub fn blinking_override(&self) -> Option<bool> {
+    pub fn blinking_override(self) -> Option<bool> {
         match self {
             Self::Shape(_) => None,
             Self::WithBlinking { blinking, .. } => blinking.blinking_override(),
@@ -122,7 +122,7 @@ pub enum CursorBlinking {
 }
 
 impl CursorBlinking {
-    fn blinking_override(&self) -> Option<bool> {
+    fn blinking_override(self) -> Option<bool> {
         match self {
             Self::Never => Some(false),
             Self::Off | Self::On => None,

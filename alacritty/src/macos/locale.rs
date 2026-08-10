@@ -21,7 +21,7 @@ pub fn set_locale_environment() -> Option<(String, String)> {
 
         // Assume `C` locale means unchanged, since it is the default anyways.
         if env_locale != "C" {
-            debug!("Using environment locale: {}", env_locale);
+            debug!("Using environment locale: {env_locale}");
             return None;
         }
     }
@@ -37,14 +37,14 @@ pub fn set_locale_environment() -> Option<(String, String)> {
     // Check if system locale was valid or not.
     if lc_all.is_null() {
         // Use fallback locale.
-        debug!("Using fallback locale: {}", FALLBACK_LOCALE);
+        debug!("Using fallback locale: {FALLBACK_LOCALE}");
 
         let _ = unsafe { setlocale(LC_CTYPE, c"UTF-8".as_ptr()) };
 
         Some(("LC_CTYPE".into(), FALLBACK_LOCALE.into()))
     } else {
         // Use system locale.
-        debug!("Using system locale: {}", system_locale);
+        debug!("Using system locale: {system_locale}");
 
         Some(("LC_ALL".into(), system_locale))
     }
@@ -67,7 +67,7 @@ fn system_locale() -> String {
         let language_code = locale.languageCode();
         #[allow(deprecated, reason = "macOS exposes no nondeprecated equivalent on old targets")]
         if let Some(country_code) = locale.countryCode() {
-            format!("{}_{}.UTF-8", language_code, country_code)
+            format!("{language_code}_{country_code}.UTF-8")
         } else {
             // Fall back to en_US in case the country code is not available.
             "en_US.UTF-8".into()

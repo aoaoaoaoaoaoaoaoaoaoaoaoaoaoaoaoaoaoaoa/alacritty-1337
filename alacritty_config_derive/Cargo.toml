@@ -1,11 +1,12 @@
 [package]
 name = "alacritty_config_derive"
 version = "0.2.6-dev"
-authors = ["Christian Duerr <contact@christianduerr.com>"]
+authors = ["Eternalist <main@eternalist.moe>", "Christian Duerr <contact@christianduerr.com>"]
 license = "MIT OR Apache-2.0"
 description = "Failure resistant deserialization derive"
-homepage = "https://alacritty.org"
+homepage = "https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337"
 repository = "https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337"
+publish = false
 edition.workspace = true
 rust-version.workspace = true
 

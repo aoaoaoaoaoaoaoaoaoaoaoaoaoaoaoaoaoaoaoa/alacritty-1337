@@ -35,7 +35,7 @@ impl Default for BellConfig {
 
 impl BellConfig {
     pub fn duration(&self) -> Duration {
-        Duration::from_millis(self.duration as u64)
+        Duration::from_millis(u64::from(self.duration))
     }
 }
 

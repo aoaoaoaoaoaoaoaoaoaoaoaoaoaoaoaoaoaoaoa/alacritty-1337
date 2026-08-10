@@ -7,12 +7,12 @@ use crossfont::{BitmapBuffer, Metrics, RasterizedGlyph};
 use crate::config::ui_config::Delta;
 
 // Colors which are used for filling shade variants.
-const COLOR_FILL_ALPHA_STEP_1: Pixel = Pixel { _r: 192, _g: 192, _b: 192 };
-const COLOR_FILL_ALPHA_STEP_2: Pixel = Pixel { _r: 128, _g: 128, _b: 128 };
-const COLOR_FILL_ALPHA_STEP_3: Pixel = Pixel { _r: 64, _g: 64, _b: 64 };
+const COLOR_FILL_ALPHA_STEP_1: Pixel = Pixel { r: 192, _g: 192, _b: 192 };
+const COLOR_FILL_ALPHA_STEP_2: Pixel = Pixel { r: 128, _g: 128, _b: 128 };
+const COLOR_FILL_ALPHA_STEP_3: Pixel = Pixel { r: 64, _g: 64, _b: 64 };
 
 /// Default color used for filling.
-const COLOR_FILL: Pixel = Pixel { _r: 255, _g: 255, _b: 255 };
+const COLOR_FILL: Pixel = Pixel { r: 255, _g: 255, _b: 255 };
 
 const POWERLINE_TRIANGLE_LTR: char = '\u{e0b0}';
 const POWERLINE_ARROW_LTR: char = '\u{e0b1}';
@@ -23,8 +23,8 @@ const POWERLINE_ARROW_RTL: char = '\u{e0b3}';
 pub fn builtin_glyph(
     character: char,
     metrics: &Metrics,
-    offset: &Delta<i8>,
-    glyph_offset: &Delta<i8>,
+    offset: Delta<i8>,
+    glyph_offset: Delta<i8>,
 ) -> Option<RasterizedGlyph> {
     let mut glyph = match character {
         // Box drawing characters and block elements.
@@ -40,13 +40,13 @@ pub fn builtin_glyph(
 
     // Since we want to ignore `glyph_offset` for the built-in font, subtract it to compensate its
     // addition when loading glyphs in the renderer.
-    glyph.left -= glyph_offset.x as i32;
-    glyph.top -= glyph_offset.y as i32;
+    glyph.left -= i32::from(glyph_offset.x);
+    glyph.top -= i32::from(glyph_offset.y);
 
     Some(glyph)
 }
 
-fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> Option<RasterizedGlyph> {
+fn box_drawing(character: char, metrics: &Metrics, offset: Delta<i8>) -> Option<RasterizedGlyph> {
     let (width, height) = cell_dimensions(metrics, offset);
     let stroke_size = calculate_stroke_size(width);
     let heavy_stroke_size = stroke_size * 2;
@@ -402,12 +402,10 @@ fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> Option
                 '\u{2589}' | '\u{1fb8b}' => width * 7. / 8.,
                 '\u{258a}' | '\u{1fb8a}' => width * 6. / 8.,
                 '\u{258b}' | '\u{1fb89}' => width * 5. / 8.,
-                '\u{258c}' => width * 4. / 8.,
+                '\u{258c}' | '\u{2590}' => width * 4. / 8.,
                 '\u{258d}' | '\u{1fb88}' => width * 3. / 8.,
                 '\u{258e}' | '\u{1fb87}' => width * 2. / 8.,
-                '\u{258f}' => width * 1. / 8.,
-                '\u{2590}' => width * 4. / 8.,
-                '\u{2595}' => width * 1. / 8.,
+                '\u{258f}' | '\u{2595}' => width * 1. / 8.,
                 _ => width,
             };
 
@@ -494,7 +492,7 @@ fn box_drawing(character: char, metrics: &Metrics, offset: &Delta<i8>) -> Option
 fn powerline_drawing(
     character: char,
     metrics: &Metrics,
-    offset: &Delta<i8>,
+    offset: Delta<i8>,
 ) -> Option<RasterizedGlyph> {
     let (width, height) = cell_dimensions(metrics, offset);
     let extra_thickness = calculate_stroke_size(width) as i32 - 1;
@@ -565,14 +563,14 @@ fn powerline_drawing(
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 struct Pixel {
-    _r: u8,
+    r: u8,
     _g: u8,
     _b: u8,
 }
 
 impl Pixel {
     fn gray(color: u8) -> Self {
-        Self { _r: color, _g: color, _b: color }
+        Self { r: color, _g: color, _b: color }
     }
 }
 
@@ -708,7 +706,7 @@ impl Canvas {
             return;
         }
         let index = x as usize + y as usize * self.width;
-        if color._r > self.buffer[index]._r {
+        if color.r > self.buffer[index].r {
             self.buffer[index] = color;
         }
     }
@@ -736,8 +734,8 @@ impl Canvas {
         let xpxl1 = x_end;
         let ypxl1 = y_end.trunc();
 
-        let color_1 = Pixel::gray(((1. - y_end.fract()) * x_gap * COLOR_FILL._r as f32) as u8);
-        let color_2 = Pixel::gray((y_end.fract() * x_gap * COLOR_FILL._r as f32) as u8);
+        let color_1 = Pixel::gray(((1. - y_end.fract()) * x_gap * f32::from(COLOR_FILL.r)) as u8);
+        let color_2 = Pixel::gray((y_end.fract() * x_gap * f32::from(COLOR_FILL.r)) as u8);
         if steep {
             self.put_pixel(ypxl1, xpxl1, color_1);
             self.put_pixel(ypxl1 + 1., xpxl1, color_2);
@@ -754,8 +752,8 @@ impl Canvas {
         let xpxl2 = x_end;
         let ypxl2 = y_end.trunc();
 
-        let color_1 = Pixel::gray(((1. - y_end.fract()) * x_gap * COLOR_FILL._r as f32) as u8);
-        let color_2 = Pixel::gray((y_end.fract() * x_gap * COLOR_FILL._r as f32) as u8);
+        let color_1 = Pixel::gray(((1. - y_end.fract()) * x_gap * f32::from(COLOR_FILL.r)) as u8);
+        let color_2 = Pixel::gray((y_end.fract() * x_gap * f32::from(COLOR_FILL.r)) as u8);
         if steep {
             self.put_pixel(ypxl2, xpxl2, color_1);
             self.put_pixel(ypxl2 + 1., xpxl2, color_2);
@@ -766,16 +764,16 @@ impl Canvas {
 
         if steep {
             for x in xpxl1 as i32 + 1..xpxl2 as i32 {
-                let color_1 = Pixel::gray(((1. - intery.fract()) * COLOR_FILL._r as f32) as u8);
-                let color_2 = Pixel::gray((intery.fract() * COLOR_FILL._r as f32) as u8);
+                let color_1 = Pixel::gray(((1. - intery.fract()) * f32::from(COLOR_FILL.r)) as u8);
+                let color_2 = Pixel::gray((intery.fract() * f32::from(COLOR_FILL.r)) as u8);
                 self.put_pixel(intery.trunc(), x as f32, color_1);
                 self.put_pixel(intery.trunc() + 1., x as f32, color_2);
                 intery += gradient;
             }
         } else {
             for x in xpxl1 as i32 + 1..xpxl2 as i32 {
-                let color_1 = Pixel::gray(((1. - intery.fract()) * COLOR_FILL._r as f32) as u8);
-                let color_2 = Pixel::gray((intery.fract() * COLOR_FILL._r as f32) as u8);
+                let color_1 = Pixel::gray(((1. - intery.fract()) * f32::from(COLOR_FILL.r)) as u8);
+                let color_2 = Pixel::gray((intery.fract() * f32::from(COLOR_FILL.r)) as u8);
                 self.put_pixel(x as f32, intery.trunc(), color_1);
                 self.put_pixel(x as f32, intery.trunc() + 1., color_2);
                 intery += gradient;
@@ -829,7 +827,7 @@ impl Canvas {
                 self.put_pixel(
                     x + x_offset,
                     y + y_offset,
-                    Pixel::gray((COLOR_FILL._r as f32 * value) as u8),
+                    Pixel::gray((f32::from(COLOR_FILL.r) * value) as u8),
                 );
             }
         }
@@ -876,7 +874,7 @@ impl Canvas {
     }
 }
 
-fn cell_dimensions(metrics: &Metrics, offset: &Delta<i8>) -> (usize, usize) {
+fn cell_dimensions(metrics: &Metrics, offset: Delta<i8>) -> (usize, usize) {
     let width = (metrics.average_advance as i32 + i32::from(offset.x)).max(1) as usize;
     let height = (metrics.line_height as i32 + i32::from(offset.y)).max(1) as usize;
     (width, height)
@@ -932,11 +930,11 @@ mod tests {
             .chain('\u{1fb00}'..='\u{1fb3b}')
             .chain('\u{1fb82}'..='\u{1fb8b}')
         {
-            assert!(builtin_glyph(character, &METRICS, &offset, &glyph_offset).is_some());
+            assert!(builtin_glyph(character, &METRICS, offset, glyph_offset).is_some());
         }
 
         for character in ('\u{2450}'..'\u{2500}').chain('\u{25a0}'..'\u{2600}') {
-            assert!(builtin_glyph(character, &METRICS, &offset, &glyph_offset).is_none());
+            assert!(builtin_glyph(character, &METRICS, offset, glyph_offset).is_none());
         }
     }
 
@@ -947,11 +945,11 @@ mod tests {
 
         // Test coverage of box drawing characters.
         for character in '\u{e0b0}'..='\u{e0b3}' {
-            assert!(builtin_glyph(character, &METRICS, &offset, &glyph_offset).is_some());
+            assert!(builtin_glyph(character, &METRICS, offset, glyph_offset).is_some());
         }
 
         for character in ('\u{e0a0}'..'\u{e0b0}').chain('\u{e0b4}'..'\u{e0c0}') {
-            assert!(builtin_glyph(character, &METRICS, &offset, &glyph_offset).is_none());
+            assert!(builtin_glyph(character, &METRICS, offset, glyph_offset).is_none());
         }
     }
 
@@ -961,7 +959,7 @@ mod tests {
         let glyph_offset = Delta::default();
 
         for character in [POWERLINE_TRIANGLE_LTR, '\u{2500}'] {
-            let glyph = builtin_glyph(character, &METRICS, &offset, &glyph_offset).unwrap();
+            let glyph = builtin_glyph(character, &METRICS, offset, glyph_offset).unwrap();
             assert_eq!((glyph.width, glyph.height), (1, 1));
             match glyph.buffer {
                 BitmapBuffer::Rgb(buffer) => assert_eq!(buffer.len(), 3),
@@ -980,7 +978,7 @@ mod tests {
             .chain(POWERLINE_TRIANGLE_LTR..=POWERLINE_ARROW_RTL);
 
         for character in characters {
-            let glyph = builtin_glyph(character, &METRICS, &offset, &glyph_offset).unwrap();
+            let glyph = builtin_glyph(character, &METRICS, offset, glyph_offset).unwrap();
             let expected = glyph.width as usize * glyph.height as usize * 3;
             match glyph.buffer {
                 BitmapBuffer::Rgb(buffer) => {

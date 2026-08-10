@@ -45,7 +45,7 @@ use crate::message_bar::MessageBuffer;
 use crate::scheduler::Scheduler;
 use crate::{input, renderer};
 
-/// Event context for one individual Alacritty window.
+/// Event context for one individual alacritty-1337 window.
 pub struct WindowContext {
     pub message_buffer: MessageBuffer,
     pub display: Display,
@@ -119,7 +119,7 @@ impl WindowContext {
 
         let display = Display::new(window, gl_context, &config, false)?;
 
-        Self::new(display, config, runtime_environment, options, proxy)
+        Self::new(display, config, runtime_environment, &options, proxy)
     }
 
     /// Create additional context with the graphics platform other windows are using.
@@ -160,7 +160,7 @@ impl WindowContext {
 
         let display = Display::new(window, gl_context, &config, tabbed)?;
 
-        let mut window_context = Self::new(display, config, runtime_environment, options, proxy)?;
+        let mut window_context = Self::new(display, config, runtime_environment, &options, proxy)?;
 
         // Set the config overrides at startup.
         //
@@ -175,7 +175,7 @@ impl WindowContext {
         display: Display,
         config: Rc<UiConfig>,
         runtime_environment: Rc<HashMap<String, String>>,
-        options: WindowOptions,
+        options: &WindowOptions,
         proxy: EventLoopProxy<Event>,
     ) -> Result<Self, Box<dyn Error>> {
         let mut pty_config = config.pty_config();
@@ -239,7 +239,7 @@ impl WindowContext {
             event_proxy.send_event(TerminalEvent::CursorBlinkingChange.into());
         }
 
-        // Create context for the Alacritty window.
+        // Create context for the alacritty-1337 window.
         Ok(WindowContext {
             preserve_title,
             terminal,

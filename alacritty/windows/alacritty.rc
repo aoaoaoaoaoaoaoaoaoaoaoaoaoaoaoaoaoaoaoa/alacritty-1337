@@ -2,8 +2,38 @@
 
 IDI_ICON ICON "alacritty.ico"
 
+#include "version.rc"
+
+1 VERSIONINFO
+FILEVERSION VERSION_MAJOR,VERSION_MINOR,VERSION_PATCH,0
+PRODUCTVERSION VERSION_MAJOR,VERSION_MINOR,VERSION_PATCH,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Eternalist\0"
+            VALUE "FileDescription", "alacritty but it doesn't suck\0"
+            VALUE "FileVersion", VERSION_STRING
+            VALUE "InternalName", "alacritty\0"
+            VALUE "LegalCopyright", "Copyright 2026 Eternalist and alacritty contributors\0"
+            VALUE "OriginalFilename", "alacritty.exe\0"
+            VALUE "ProductName", "alacritty-1337\0"
+            VALUE "ProductVersion", VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
+
 #define RT_MANIFEST 24
 #define APP_MANIFEST 1
 
 APP_MANIFEST RT_MANIFEST alacritty.manifest
-

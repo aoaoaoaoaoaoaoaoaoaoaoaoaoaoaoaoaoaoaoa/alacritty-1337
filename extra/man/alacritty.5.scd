@@ -2,27 +2,31 @@ ALACRITTY(5)
 
 # NAME
 
-Alacritty - TOML configuration file format.
+alacritty-1337 - TOML configuration file format.
 
 # SYNTAX
 
-Alacritty's configuration file uses the TOML format. The format's specification
+alacritty-1337's configuration file uses the TOML format. The format's specification
 can be found at _https://toml.io/en/v1.1.0_.
 
 # LOCATION
 
-Alacritty doesn't create the config file for you, but it looks for one in the
+alacritty-1337 doesn't create the config file for you, but it looks for one in the
 following locations on UNIX systems:
 
+. _$XDG_CONFIG_HOME/alacritty-1337/alacritty.toml_
 . _$XDG_CONFIG_HOME/alacritty/alacritty.toml_
 . _$XDG_CONFIG_HOME/alacritty.toml_
+. _$HOME/.config/alacritty-1337/alacritty.toml_
 . _$HOME/.config/alacritty/alacritty.toml_
 . _$HOME/.alacritty.toml_
+. _/etc/alacritty-1337/alacritty.toml_
 . _/etc/alacritty/alacritty.toml_
 
 On Windows, the config file will be looked for in:
 
-. _%APPDATA%\\alacritty\\alacritty.toml_
+. _%APPDATA%\\alacritty-1337\\alacritty.toml_
+. _%APPDATA%\\alacritty\\alacritty.toml_ (legacy)
 
 # GENERAL
 
@@ -69,7 +73,7 @@ This section documents the *[general]* table of the configuration file.
 # ENV
 
 All key-value pairs in the *[env]* section will be added as environment variables
-for any process spawned by Alacritty, including its shell. Some entries may
+for any process spawned by alacritty-1337, including its shell. Some entries may
 override variables set by alacritty itself.
 
 Example:
@@ -161,11 +165,11 @@ This section documents the *[window]* table of the configuration file.
 
 	Window title.
 
-	Default: _"Alacritty"_
+	Default: _"alacritty-1337"_
 
 *dynamic_title* = _true_ | _false_
 
-	Allow terminal applications to change Alacritty's window title.
+	Allow terminal applications to change alacritty-1337's window title.
 
 	Default: _true_
 
@@ -175,7 +179,7 @@ This section documents the *[window]* table of the configuration file.
 
 	On Wayland, *general* is used as _app\_id_ and *instance* is ignored.
 
-	Default: { instance = _"Alacritty"_, general = _"Alacritty"_ }
+	Default: { instance = _"alacritty-1337"_, general = _"alacritty-1337"_ }
 
 *decorations_theme_variant* = _"Dark"_ | _"Light"_ | _"None"_
 
@@ -285,7 +289,7 @@ macOS:     { family = _"Menlo"_,     style = _"Regular"_ }
 
 *builtin_box_drawing* = _true_ | _false_
 
-	When _true_, Alacritty will use a custom built-in font for box drawing
+	When _true_, alacritty-1337 will use a custom built-in font for box drawing
 	characters (Unicode points _U+2500_ - _U+259F_), legacy computing symbols
 	(_U+1FB00_ - _U+1FB3B_), and powerline symbols (_U+E0B0_ - _U+E0B3_).
 
@@ -531,7 +535,7 @@ This section documents the *[selection]* table of the configuration file.
 *semantic_escape_chars* = _"<string>"_
 
 	This string contains all characters that are used as separators for
-	"semantic words" in Alacritty.
+	"semantic words" in alacritty-1337.
 
 	Default: _",│`|:\\"' ()[]{}<>\\t"_
 
@@ -640,7 +644,7 @@ This section documents the *[mouse]* table of the configuration file.
 	See _keyboard.bindings_ for full documentation on _mods_, _mode_, _command_,
 	_chars_, and _action_.
 
-	When an application running within Alacritty captures the mouse, the `Shift`
+	When an application running within alacritty-1337 captures the mouse, the `Shift`
 	modifier can be used to suppress mouse reporting. If no action is found for
 	the event, actions for the event without the `Shift` modifier are triggered
 	instead.
@@ -830,17 +834,17 @@ _https://docs.rs/winit/latest/winit/keyboard/enum.Key.html#variant.Dead_
 		*ClearHistory*
 			Clear the display buffer(s) to remove history.
 		*Hide*
-			Hide the Alacritty window.
+			Hide the alacritty-1337 window.
 		*Minimize*
-			Minimize the Alacritty window.
+			Minimize the alacritty-1337 window.
 		*Quit*
-			Quit Alacritty.
+			Quit alacritty-1337.
 		*ClearLogNotice*
 			Clear warning and error notices.
 		*SpawnNewInstance*
-			Spawn a new instance of Alacritty.
+			Spawn a new instance of alacritty-1337.
 		*CreateNewWindow*
-			Create a new Alacritty window.
+			Create a new alacritty-1337 window.
 		*ToggleFullscreen*
 			Toggle fullscreen.
 		*ToggleMaximized*
@@ -960,7 +964,7 @@ _https://docs.rs/winit/latest/winit/keyboard/enum.Key.html#variant.Dead_
 		*ToggleSimpleFullscreen*
 			Enter fullscreen without occupying another space.
 		*HideOtherApplications*
-			Hide all windows other than Alacritty.
+			Hide all windows other than alacritty-1337.
 		*CreateNewTab*
 			Create new window in a tab.
 		*SelectNextTab*
@@ -1009,7 +1013,7 @@ bindings = [++
 
 This section documents the *[debug]* table of the configuration file.
 
-Debug options are meant to help troubleshoot issues with Alacritty. These can
+Debug options are meant to help troubleshoot issues with alacritty-1337. These can
 change or be removed entirely without warning, so their stability shouldn't be
 relied upon.
 
@@ -1021,7 +1025,7 @@ relied upon.
 
 *persistent_logging* = _true_ | _false_
 
-	Keep the log file after quitting Alacritty.
+	Keep the log file after quitting alacritty-1337.
 
 	Default: _false_
 
@@ -1067,9 +1071,8 @@ relied upon.
 
 # BUGS
 
-Found a bug? Please report it at _https://github.com/alacritty/alacritty/issues_.
+Found a bug? Please report it at _https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337/issues_.
 
 # MAINTAINERS
 
-- Christian Duerr <contact@christianduerr.com>
-- Kirill Chibisov <contact@kchibisov.com>
+- Eternalist <main@eternalist.moe>

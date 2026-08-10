@@ -2,54 +2,165 @@ name: Release
 
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   GH_TOKEN: ${{ github.token }}
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      basename: ${{ steps.identity.outputs.basename }}
+      version: ${{ steps.identity.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install 1.97.1 --profile minimal
+      - name: Lock release identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(cargo +1.97.1 metadata --locked --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; print(next(package["version"] for package in json.load(sys.stdin)["packages"] if package["name"] == "alacritty-1337"))')
+          if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'release version is not stable SemVer: %s\n' "$version" >&2
+            exit 1
+          fi
+          if [[ $GITHUB_EVENT_NAME == push && $GITHUB_REF_NAME != "v$version" ]]; then
+            printf 'tag %s disagrees with Cargo version %s\n' "$GITHUB_REF_NAME" "$version" >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'basename=alacritty-1337-v%s\n' "$version" >> "$GITHUB_OUTPUT"
+
   macos:
+    needs: preflight
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install 1.97.1 --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
       - run: rustup default 1.97.1
       - run: brew install scdoc
-      - run: cargo +1.97.1 test --locked --release --target x86_64-apple-darwin
+      - run: cargo test --locked --release --target x86_64-apple-darwin -p alacritty-1337
       - run: make CARGO_PROFILE=release dmg-universal
-      - name: Upload application
+      - name: Inspect application and disk image
+        shell: bash
+        env:
+          BASENAME: ${{ needs.preflight.outputs.basename }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          mv target/release/osx/Alacritty.dmg "Alacritty-${GITHUB_REF_NAME}.dmg"
-          .github/workflows/upload_asset.sh "Alacritty-${GITHUB_REF_NAME}.dmg"
+          set -euo pipefail
+          bundle=target/release/osx/alacritty-1337.app
+          image=target/release/osx/alacritty-1337.dmg
+          test "$("$bundle/Contents/MacOS/alacritty" --version)" = "alacritty-1337 $VERSION"
+          architectures=$(lipo -archs "$bundle/Contents/MacOS/alacritty")
+          [[ $architectures == *x86_64* && $architectures == *arm64* ]]
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist")" = moe.eternalist.alacritty-1337
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/Contents/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$bundle/Contents/Info.plist")" = "$VERSION"
+          codesign --verify --deep --strict "$bundle"
+
+          mount=$RUNNER_TEMP/alacritty-1337-mount
+          mkdir -p "$mount"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$image"
+          trap 'hdiutil detach "$mount"' EXIT
+          mounted=$mount/alacritty-1337.app
+          test "$("$mounted/Contents/MacOS/alacritty" --version)" = "alacritty-1337 $VERSION"
+          codesign --verify --deep --strict "$mounted"
+          hdiutil detach "$mount"
+          trap - EXIT
+          mv "$image" "$BASENAME.dmg"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-macos
+          path: alacritty-1337-v*.dmg
+          compression-level: 0
+          if-no-files-found: error
 
   windows:
+    needs: preflight
     runs-on: windows-latest
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install 1.97.1 --profile minimal
-      - run: cargo +1.97.1 test --locked --release
-      - run: cargo +1.97.1 build --locked --release
-      - name: Upload portable executable
+      - run: cargo +1.97.1 test --locked --release -p alacritty-1337
+      - run: cargo +1.97.1 build --locked --release -p alacritty-1337 --bin alacritty
+      - name: Inspect portable executable
+        shell: pwsh
+        env:
+          BASENAME: ${{ needs.preflight.outputs.basename }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          cp target/release/alacritty.exe "Alacritty-${GITHUB_REF_NAME}-portable.exe"
-          .github/workflows/upload_asset.sh "Alacritty-${GITHUB_REF_NAME}-portable.exe"
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Item target\release\alacritty.exe).VersionInfo
+          if ($version.ProductName -ne 'alacritty-1337') { throw "wrong product: $($version.ProductName)" }
+          if ($version.ProductVersion -ne $env:VERSION) { throw "wrong version: $($version.ProductVersion)" }
+          Copy-Item target\release\alacritty.exe "${env:BASENAME}-portable.exe"
       - run: dotnet tool install --global wix --version 4.0.5
       - name: Create MSI installer
+        shell: pwsh
+        env:
+          BASENAME: ${{ needs.preflight.outputs.basename }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
+          $ErrorActionPreference = 'Stop'
           wix extension add WixToolset.UI.wixext/4.0.5 WixToolset.Util.wixext/4.0.5
-          version=$(python3 -c 'import json, subprocess; data=json.loads(subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version", "1"])); print(next(p["version"] for p in data["packages"] if p["name"] == "alacritty"))')
-          wix build -arch x64 -d "ProductVersion=$version" -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -out "Alacritty-${GITHUB_REF_NAME}-installer.msi" alacritty/windows/wix/alacritty.wxs
-      - name: Upload MSI installer
-        run: .github/workflows/upload_asset.sh "Alacritty-${GITHUB_REF_NAME}-installer.msi"
+          wix build -arch x64 -d "ProductVersion=$env:VERSION" -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -out "${env:BASENAME}-installer.msi" alacritty/windows/wix/alacritty.wxs
+      - name: Exercise MSI lifecycle
+        shell: pwsh
+        env:
+          BASENAME: ${{ needs.preflight.outputs.basename }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Resolve-Path "${env:BASENAME}-installer.msi").Path
+          $install = Join-Path $env:LOCALAPPDATA 'Programs\alacritty-1337\alacritty.exe'
+          $registry = 'HKCU:\Software\Eternalist\alacritty-1337'
+          $context = 'HKCU:\Software\Classes\Directory\Background\shell\Open alacritty-1337 here'
+          $shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\alacritty-1337\alacritty-1337.lnk'
+
+          function Invoke-Msi([string] $mode) {
+            $label = $mode.TrimStart('/')
+            $log = Join-Path $env:RUNNER_TEMP "msi-$label.log"
+            $arguments = @($mode, "`"$msi`"", '/qn', '/norestart', '/L*v', "`"$log`"")
+            $process = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "msiexec $mode failed with $($process.ExitCode)" }
+          }
+
+          try {
+            Invoke-Msi '/i'
+            if (!(Test-Path $install)) { throw 'installed binary is absent' }
+            $installedVersion = (Get-Item $install).VersionInfo
+            if ($installedVersion.ProductName -ne 'alacritty-1337' -or $installedVersion.ProductVersion -ne $env:VERSION) { throw 'installed binary has the wrong identity' }
+            if (!(Test-Path $registry) -or !(Test-Path $context) -or !(Test-Path $shortcut)) { throw 'installer integration is incomplete' }
+          } finally {
+            if (Test-Path $install) { Invoke-Msi '/x' }
+          }
+
+          if ((Test-Path $install) -or (Test-Path $registry) -or (Test-Path $context) -or (Test-Path $shortcut)) { throw 'MSI uninstall left owned residue' }
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if ($userPath -like '*alacritty-1337*') { throw 'MSI uninstall left a PATH entry' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-windows
+          path: |
+            alacritty-1337-v*-portable.exe
+            alacritty-1337-v*-installer.msi
+          compression-level: 0
+          if-no-files-found: error
 
   linux:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,18 +168,88 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes cmake libfontconfig1-dev libfreetype6-dev libxcb-xfixes0-dev libxkbcommon-dev pkg-config scdoc
-      - run: cargo +1.97.1 test --locked --release
-      - name: Generate manpages
+          sudo apt-get install --yes appstream cmake desktop-file-utils libfontconfig1-dev libfreetype6-dev libxcb-xfixes0-dev libxkbcommon-dev pkg-config scdoc
+      - run: cargo +1.97.1 test --locked --release -p alacritty-1337
+      - name: Assemble and inspect integration assets
+        shell: bash
+        env:
+          BASENAME: ${{ needs.preflight.outputs.basename }}
         run: |
-          scdoc < extra/man/alacritty.1.scd | gzip -9nc > alacritty.1.gz
-          scdoc < extra/man/alacritty-msg.1.scd | gzip -9nc > alacritty-msg.1.gz
-          scdoc < extra/man/alacritty.5.scd | gzip -9nc > alacritty.5.gz
-          scdoc < extra/man/alacritty-bindings.5.scd | gzip -9nc > alacritty-bindings.5.gz
-          scdoc < extra/man/alacritty-escapes.7.scd | gzip -9nc > alacritty-escapes.7.gz
-      - name: Upload assets
+          set -euo pipefail
+          root=$RUNNER_TEMP/alacritty-1337-linux
+          install -Dm644 extra/linux/alacritty-1337.desktop "$root/share/applications/alacritty-1337.desktop"
+          install -Dm644 extra/linux/moe.eternalist.alacritty-1337.metainfo.xml "$root/share/metainfo/moe.eternalist.alacritty-1337.metainfo.xml"
+          install -Dm644 extra/logo/alacritty-term.svg "$root/share/pixmaps/alacritty-1337.svg"
+          install -Dm644 extra/completions/alacritty.bash "$root/share/bash-completion/completions/alacritty"
+          install -Dm644 extra/completions/alacritty.fish "$root/share/fish/vendor_completions.d/alacritty.fish"
+          install -Dm644 extra/completions/_alacritty "$root/share/zsh/site-functions/_alacritty"
+          install -Dm644 extra/alacritty.info "$root/share/terminfo/alacritty.info"
+          install -Dm644 LICENSE-APACHE "$root/share/licenses/alacritty-1337/LICENSE-APACHE"
+          install -Dm644 LICENSE-MIT "$root/share/licenses/alacritty-1337/LICENSE-MIT"
+          for page in alacritty.1 alacritty-msg.1 alacritty.5 alacritty-bindings.5 alacritty-escapes.7; do
+            section=${page##*.}
+            install -d "$root/share/man/man$section"
+            scdoc < "extra/man/$page.scd" | gzip -9nc > "$root/share/man/man$section/$page.gz"
+          done
+
+          desktop-file-validate "$root/share/applications/alacritty-1337.desktop"
+          appstreamcli validate --no-net "$root/share/metainfo/moe.eternalist.alacritty-1337.metainfo.xml"
+          tic -xe alacritty,alacritty-direct -o "$RUNNER_TEMP/terminfo" extra/alacritty.info
+          find "$root/share/man" -type f -name '*.gz' -exec gzip --test {} +
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -C "$root" -cf - . \
+            | gzip -9n > "$BASENAME-linux-assets.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-linux
+          path: alacritty-1337-v*-linux-assets.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
+  assemble:
+    needs: [preflight, macos, windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Lock inventory and checksums
+        shell: bash
+        env:
+          BASENAME: ${{ needs.preflight.outputs.basename }}
         run: |
-          cp extra/logo/alacritty-term.svg Alacritty.svg
-          for asset in Alacritty.svg alacritty.1.gz alacritty-msg.1.gz alacritty.5.gz alacritty-bindings.5.gz alacritty-escapes.7.gz extra/completions/alacritty.bash extra/completions/alacritty.fish extra/completions/_alacritty extra/linux/Alacritty.desktop extra/alacritty.info; do
+          set -euo pipefail
+          shopt -s nullglob
+          cp LICENSE-APACHE LICENSE-MIT dist/
+          assets=(dist/*)
+          if [[ ${#assets[@]} -ne 6 ]]; then
+            printf 'expected six release artifacts, found %s\n' "${#assets[@]}" >&2
+            printf '%s\n' "${assets[@]}" >&2
+            exit 1
+          fi
+          test -f "dist/$BASENAME.dmg"
+          test -f "dist/$BASENAME-portable.exe"
+          test -f "dist/$BASENAME-installer.msi"
+          test -f "dist/$BASENAME-linux-assets.tar.gz"
+          test -f dist/LICENSE-APACHE
+          test -f dist/LICENSE-MIT
+          (cd dist && sha256sum "$BASENAME"* LICENSE-* | sort -k2 > SHA256SUMS)
+          (cd dist && sha256sum --check SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alacritty-1337-release-candidate
+          path: dist/*
+          compression-level: 0
+          if-no-files-found: error
+      - name: Upload complete draft release
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for asset in dist/*; do
             .github/workflows/upload_asset.sh "$asset"
           done

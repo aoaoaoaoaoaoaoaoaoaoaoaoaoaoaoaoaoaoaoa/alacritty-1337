@@ -12,7 +12,7 @@ use crate::config;
 mod yaml;
 
 /// Handle migration.
-pub fn migrate(options: MigrateOptions) {
+pub fn migrate(options: &MigrateOptions) {
     // Find configuration file path.
     let config_path = options
         .config_file
@@ -21,9 +21,7 @@ pub fn migrate(options: MigrateOptions) {
         .or_else(|| config::installed_config("yml"));
 
     // Abort if system has no installed configuration.
-    let config_path = if let Some(config_path) = config_path {
-        config_path
-    } else {
+    let Some(config_path) = config_path else {
         eprintln!("No configuration file found");
         std::process::exit(1);
     };
@@ -45,7 +43,7 @@ pub fn migrate(options: MigrateOptions) {
     }
 
     // Migrate the root config.
-    match migrate_config(&options, &config_path, config::IMPORT_RECURSION_LIMIT) {
+    match migrate_config(options, &config_path, config::IMPORT_RECURSION_LIMIT) {
         Ok(migration) => {
             if !options.silent {
                 println!("{}", migration.success_message(false));
@@ -66,9 +64,8 @@ fn migrate_config<'a>(
     recursion_limit: usize,
 ) -> Result<Migration<'a>, String> {
     // Ensure configuration file has an extension.
-    let suffix = match path.extension().and_then(|extension| extension.to_str()) {
-        Some(suffix) => suffix,
-        None => return Err("missing file extension".to_string()),
+    let Some(suffix) = path.extension().and_then(|extension| extension.to_str()) else {
+        return Err("missing file extension".to_string());
     };
 
     // Handle legacy YAML files.
@@ -87,7 +84,7 @@ fn migrate_config<'a>(
 
     // Read TOML file and perform all in-file migrations.
     let toml = fs::read_to_string(path).map_err(|err| format!("{err}"))?;
-    let mut migrated = migrate_toml(toml)?;
+    let mut migrated = migrate_toml(&toml)?;
 
     // Recursively migrate imports.
     migrate_imports(options, path, &mut migrated, recursion_limit)?;
@@ -99,7 +96,7 @@ fn migrate_config<'a>(
 }
 
 /// Migrate TOML config to the latest version.
-fn migrate_toml(toml: String) -> Result<DocumentMut, String> {
+fn migrate_toml(toml: &str) -> Result<DocumentMut, String> {
     // Parse TOML file.
     let mut document = match toml.parse::<DocumentMut>() {
         Ok(document) => document,
@@ -178,10 +175,7 @@ fn move_value(document: &mut DocumentMut, origin: &[&str], target: &[&str]) -> R
             return Err(String::from("cannot move from a non-table TOML structure"));
         };
 
-        let (key, item) = match table.get_key_value_mut(element) {
-            Some((key, item)) => (key, item),
-            None => return Ok(()),
-        };
+        let Some((key, item)) = table.get_key_value_mut(element) else { return Ok(()) };
 
         origin_key = Some(key);
         origin_item = item;
@@ -342,6 +336,6 @@ root_value = 3
 
     #[test]
     fn migrate_empty() {
-        assert!(migrate_toml(String::new()).unwrap().to_string().is_empty());
+        assert!(migrate_toml("").unwrap().to_string().is_empty());
     }
 }

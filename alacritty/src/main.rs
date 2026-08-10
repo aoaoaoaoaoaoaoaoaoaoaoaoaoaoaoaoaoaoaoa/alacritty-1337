@@ -1,4 +1,4 @@
-//! Alacritty - The GPU Enhanced Terminal.
+//! alacritty-1337 - The GPU Enhanced Terminal.
 
 #![cfg_attr(
     test,
@@ -100,7 +100,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     match options.subcommands {
         #[cfg(unix)]
         Some(Subcommands::Msg(options)) => msg(options)?,
-        Some(Subcommands::Migrate(options)) => migrate::migrate(options),
+        Some(Subcommands::Migrate(options)) => migrate::migrate(&options),
         None => alacritty(options)?,
     }
 
@@ -116,10 +116,10 @@ fn msg(mut options: MessageOptions) -> Result<(), Box<dyn Error>> {
         window_options.activation_token =
             env::var("XDG_ACTIVATION_TOKEN").or_else(|_| env::var("DESKTOP_STARTUP_ID")).ok();
     }
-    ipc::send_message(options.socket, options.message).map_err(|err| err.into())
+    ipc::send_message(options.socket, &options.message).map_err(Into::into)
 }
 
-/// Temporary files stored for Alacritty.
+/// Temporary files stored for alacritty-1337.
 ///
 /// This stores temporary files to automate their destruction through its `Drop` implementation.
 struct TemporaryFiles {
@@ -145,7 +145,7 @@ impl Drop for TemporaryFiles {
     }
 }
 
-/// Run main Alacritty entrypoint.
+/// Run the main alacritty-1337 entrypoint.
 ///
 /// Creates a window, the terminal state, PTY, I/O event loop, input processor,
 /// config change monitor, and runs the main display loop.
@@ -159,7 +159,7 @@ fn alacritty(mut options: Options) -> Result<(), Box<dyn Error>> {
     // Initialize the logger as soon as possible as to capture output from other subsystems.
     let log_file = logging::initialize(&options, window_event_loop.create_proxy())?;
 
-    info!("Welcome to Alacritty");
+    info!("Welcome to alacritty-1337");
     info!("Version {}", env!("VERSION"));
 
     #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]

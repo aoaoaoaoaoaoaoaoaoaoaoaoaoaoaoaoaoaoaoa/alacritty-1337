@@ -17,9 +17,9 @@ use crate::config::ui_config::Program;
 use crate::config::window::{Class, Identity};
 use crate::logging::LOG_TARGET_IPC_CONFIG;
 
-/// CLI options for the main Alacritty executable.
+/// CLI options for the main alacritty executable.
 #[derive(Parser, Default, Debug)]
-#[clap(author, about, version = env!("VERSION"))]
+#[clap(name = "alacritty-1337", author, about, version = env!("VERSION"))]
 pub struct Options {
     /// Print all events to STDOUT.
     #[clap(long)]
@@ -29,12 +29,12 @@ pub struct Options {
     #[clap(long, conflicts_with("daemon"))]
     pub ref_test: bool,
 
-    /// X11 window ID to embed Alacritty within (decimal or hexadecimal with "0x" prefix).
+    /// X11 window ID to embed alacritty-1337 within (decimal or hexadecimal with "0x" prefix).
     #[clap(long)]
     pub embed: Option<String>,
 
     /// Specify alternative configuration file [default:
-    /// $XDG_CONFIG_HOME/alacritty/alacritty.toml].
+    /// $XDG_CONFIG_HOME/alacritty-1337/alacritty.toml].
     #[allow(
         clippy::doc_markdown,
         reason = "clap renders this text as terminal help, not Markdown"
@@ -43,12 +43,13 @@ pub struct Options {
     #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
 
-    /// Specify alternative configuration file [default: %APPDATA%\alacritty\alacritty.toml].
+    /// Specify alternative configuration file [default: %APPDATA%\alacritty-1337\alacritty.toml].
     #[cfg(windows)]
     #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
 
-    /// Specify alternative configuration file [default: $HOME/.config/alacritty/alacritty.toml].
+    /// Specify alternative configuration file [default:
+    /// $HOME/.config/alacritty-1337/alacritty.toml].
     #[cfg(target_os = "macos")]
     #[clap(long, value_hint = ValueHint::FilePath)]
     pub config_file: Option<PathBuf>,
@@ -213,11 +214,11 @@ impl From<TerminalOptions> for PtyOptions {
 /// Window specific cli options which can be passed to new windows via IPC.
 #[derive(Serialize, Deserialize, Args, Default, Debug, Clone, PartialEq, Eq)]
 pub struct WindowIdentity {
-    /// Defines the window title [default: Alacritty].
+    /// Defines the window title [default: alacritty-1337].
     #[clap(short = 'T', short_alias('t'), long)]
     pub title: Option<String>,
 
-    /// Defines window class/app_id on X11/Wayland [default: Alacritty].
+    /// Defines window class/app_id on X11/Wayland [default: alacritty-1337].
     #[allow(
         clippy::doc_markdown,
         reason = "clap renders this text as terminal help, not Markdown"
@@ -246,7 +247,7 @@ pub enum Subcommands {
     Migrate(MigrateOptions),
 }
 
-/// Send a message to the Alacritty socket.
+/// Send a message to the alacritty-1337 socket.
 #[cfg(unix)]
 #[derive(Args, Debug)]
 pub struct MessageOptions {
@@ -263,13 +264,13 @@ pub struct MessageOptions {
 #[cfg(unix)]
 #[derive(Subcommand, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum SocketMessage {
-    /// Create a new window in the same Alacritty process.
+    /// Create a new window in the same alacritty-1337 process.
     CreateWindow(WindowOptions),
 
-    /// Update the Alacritty configuration.
+    /// Update the alacritty-1337 configuration.
     Config(IpcConfig),
 
-    /// Read runtime Alacritty configuration.
+    /// Read runtime alacritty-1337 configuration.
     GetConfig(IpcGetConfig),
 }
 
@@ -398,7 +399,7 @@ impl ParsedOptions {
                     );
                     let _ = self.config_options.swap_remove(i);
                 },
-                Ok(_) => i += 1,
+                Ok(()) => i += 1,
             }
         }
     }
@@ -546,30 +547,29 @@ mod tests {
     #[test]
     fn completions() {
         let mut clap = Options::command();
+        let update = std::env::var_os("ALACRITTY_UPDATE_COMPLETIONS").is_some();
 
         for (shell, file) in &[
             (Shell::Bash, "alacritty.bash"),
             (Shell::Fish, "alacritty.fish"),
             (Shell::Zsh, "_alacritty"),
         ] {
+            let path = format!("../extra/completions/{file}");
+            if update {
+                let mut file = File::create(path).unwrap();
+                clap_complete::generate(*shell, &mut clap, "alacritty", &mut file);
+                continue;
+            }
+
             let mut generated = Vec::new();
             clap_complete::generate(*shell, &mut clap, "alacritty", &mut generated);
             let generated = String::from_utf8_lossy(&generated);
 
             let mut completion = String::new();
-            let mut file = File::open(format!("../extra/completions/{file}")).unwrap();
+            let mut file = File::open(path).unwrap();
             file.read_to_string(&mut completion).unwrap();
 
             assert_eq!(generated, completion);
         }
-
-        // NOTE: Use this to generate new completions.
-        //
-        // let mut file = File::create("../extra/completions/alacritty.bash").unwrap();
-        // clap_complete::generate(Shell::Bash, &mut clap, "alacritty", &mut file);
-        // let mut file = File::create("../extra/completions/alacritty.fish").unwrap();
-        // clap_complete::generate(Shell::Fish, &mut clap, "alacritty", &mut file);
-        // let mut file = File::create("../extra/completions/_alacritty").unwrap();
-        // clap_complete::generate(Shell::Zsh, &mut clap, "alacritty", &mut file);
     }
 }

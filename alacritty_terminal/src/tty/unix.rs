@@ -37,11 +37,8 @@ pub(crate) const PTY_CHILD_EVENT_TOKEN: usize = 1;
 /// Really only needed on BSD, but should be fine elsewhere.
 fn set_controlling_terminal(fd: c_int) -> Result<()> {
     let res = unsafe {
-        // TIOSCTTY changes based on platform and the `ioctl` call is different
-        // based on architecture (32/64). So a generic cast is used to make sure
-        // there are no issues. To allow such a generic cast the clippy warning
-        // is disabled.
-        libc::ioctl(fd, TIOCSCTTY as _, 0)
+        // The request constant's width varies by platform; `ioctl` requires `c_ulong`.
+        libc::ioctl(fd, libc::c_ulong::from(TIOCSCTTY), 0)
     };
 
     if res == 0 { Ok(()) } else { Err(Error::last_os_error()) }
@@ -160,7 +157,7 @@ fn default_shell_command(shell: &str, user: &str, home: &str) -> Command {
 
     // Exec the shell with argv[0] prepended by '-' so it becomes a login shell.
     // `login` normally does this itself, but `-l` disables this.
-    let exec = format!("exec -a -{} {}", shell_name, shell);
+    let exec = format!("exec -a -{shell_name} {shell}");
 
     // Since we use -l, `login` will not change directory to the user's home. However,
     // `login` only checks the current working directory for a .hushlogin file, causing

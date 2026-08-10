@@ -85,7 +85,7 @@ pub struct IndexedColor {
 
 impl IndexedColor {
     #[inline]
-    pub fn index(&self) -> u8 {
+    pub fn index(self) -> u8 {
         self.index.0
     }
 }

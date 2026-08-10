@@ -31,6 +31,7 @@ impl Direction {
 }
 
 /// Terminal grid boundaries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Boundary {
     /// Cursor's range of motion in the grid.
     ///

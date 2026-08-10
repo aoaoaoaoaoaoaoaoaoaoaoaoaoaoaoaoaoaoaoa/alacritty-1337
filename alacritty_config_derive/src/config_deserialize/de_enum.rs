@@ -5,6 +5,10 @@ use syn::{DataEnum, Generics, Ident};
 
 use crate::{ConfigAttrs, serde_replace};
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "derive entrypoints own their one-shot syntax tree"
+)]
 pub fn derive_deserialize(ident: Ident, generics: Generics, data_enum: DataEnum) -> TokenStream {
     let visitor = format_ident!("{}Visitor", ident);
 

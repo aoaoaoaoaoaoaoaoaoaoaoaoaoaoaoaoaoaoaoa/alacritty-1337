@@ -550,7 +550,7 @@ impl Dimensions for (usize, usize) {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Indexed<T> {
     pub point: Point,
     pub cell: T,

@@ -72,10 +72,7 @@ impl HintState {
 
     /// Update the visible hint matches and key labels.
     pub fn update_matches<T>(&mut self, term: &Term<T>) {
-        let hint = match self.hint.as_mut() {
-            Some(hint) => hint,
-            None => return,
-        };
+        let Some(hint) = self.hint.as_mut() else { return };
 
         // Clear current matches.
         self.matches.clear();

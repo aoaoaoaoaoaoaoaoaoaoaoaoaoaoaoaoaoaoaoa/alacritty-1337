@@ -418,7 +418,11 @@ impl Display {
         window: Window,
         gl_context: NotCurrentContext,
         config: &UiConfig,
-        _tabbed: bool,
+        #[cfg_attr(
+            windows,
+            allow(unused_variables, reason = "tabbed startup is unsupported on Windows")
+        )]
+        tabbed: bool,
     ) -> Result<Display, Error> {
         let raw_window_handle = window.raw_window_handle();
 
@@ -503,13 +507,13 @@ impl Display {
 
         window.set_visible(true);
 
-        // Always focus new windows, even if no Alacritty window is currently focused.
+        // Always focus new windows, even if no alacritty-1337 window is currently focused.
         #[cfg(target_os = "macos")]
         window.focus_window();
 
         #[allow(clippy::single_match, reason = "additional match arms exist on other platforms")]
         #[cfg(not(windows))]
-        if !_tabbed {
+        if !tabbed {
             match config.window.startup_mode {
                 #[cfg(target_os = "macos")]
                 StartupMode::SimpleFullscreen => window.set_simple_fullscreen(true),
@@ -756,7 +760,7 @@ impl Display {
             pty_resize_handle.on_resize(new_size.into());
 
             // Resize terminal.
-            terminal.resize(new_size);
+            terminal.resize(&new_size);
 
             // Resize damage tracking.
             self.damage_tracker.resize(new_size.screen_lines(), new_size.columns());
@@ -780,10 +784,7 @@ impl Display {
     //
     /// Update the state of the renderer.
     pub fn process_renderer_update(&mut self) {
-        let renderer_update = match self.pending_renderer_update.take() {
-            Some(renderer_update) => renderer_update,
-            _ => return,
-        };
+        let Some(renderer_update) = self.pending_renderer_update.take() else { return };
 
         // Ensure we're modifying the correct OpenGL context.
         if !self.make_current() {
@@ -1026,7 +1027,7 @@ impl Display {
             self.damage_tracker.frame().add_viewport_rect(&size_info, x, y as i32, width, height);
 
             // Draw rectangles.
-            self.renderer.draw_rects(&size_info, &metrics, rects);
+            self.renderer.draw_rects(&size_info, &metrics, &rects);
 
             // Relay messages to the user.
             let glyph_cache = &mut self.glyph_cache;
@@ -1044,7 +1045,7 @@ impl Display {
             }
         } else {
             // Draw rectangles.
-            self.renderer.draw_rects(&size_info, &metrics, rects);
+            self.renderer.draw_rects(&size_info, &metrics, &rects);
         }
 
         self.draw_render_timer(config);
@@ -1063,7 +1064,7 @@ impl Display {
             let damage = self.damage_tracker.shape_frame_damage(self.size_info.into());
             let mut rects = Vec::with_capacity(damage.len());
             self.highlight_damage(&mut rects);
-            self.renderer.draw_rects(&self.size_info, &metrics, rects);
+            self.renderer.draw_rects(&self.size_info, &metrics, &rects);
         }
 
         // Clearing debug highlights from the previous frame requires full redraw.
@@ -1071,7 +1072,7 @@ impl Display {
 
         if matches!(self.raw_window_handle, RawWindowHandle::Xcb(_) | RawWindowHandle::Xlib(_)) {
             // On X11 `swap_buffers` does not block for vsync. However the next OpenGl command
-            // will block to synchronize (this is `glClear` in Alacritty), which causes a
+            // will block to synchronize (this is `glClear` in alacritty-1337), which causes a
             // permanent one frame delay.
             self.renderer.finish();
         }
@@ -1173,9 +1174,7 @@ impl Display {
         rects: &mut Vec<RenderRect>,
         config: &UiConfig,
     ) {
-        let preedit = if let Some(preedit) = self.ime.preedit() {
-            preedit
-        } else {
+        let Some(preedit) = self.ime.preedit() else {
             // In case we don't have preedit, just set the popup point.
             self.window.update_ime_position(point, &self.size_info);
             return;
@@ -1290,7 +1289,7 @@ impl Display {
             .highlighted_hint
             .iter()
             .chain(&self.vi_highlighted_hint)
-            .filter_map(|hint| hint.hyperlink().map(|hyperlink| hyperlink.uri()))
+            .filter_map(|hint| hint.hyperlink().map(term::cell::Hyperlink::uri))
             .map(|uri| StrShortener::new(uri, num_cols, ShortenDirection::Right, Some(SHORTENER)))
             .collect();
 
@@ -1478,11 +1477,12 @@ impl Display {
 
         // Get the display vblank interval.
         let monitor_vblank_interval = 1_000_000.
-            / self
-                .window
-                .current_monitor()
-                .and_then(|monitor| monitor.refresh_rate_millihertz())
-                .unwrap_or(60_000) as f64;
+            / f64::from(
+                self.window
+                    .current_monitor()
+                    .and_then(|monitor| monitor.refresh_rate_millihertz())
+                    .unwrap_or(60_000),
+            );
 
         // Now convert it to micro seconds.
         let monitor_vblank_interval =

@@ -20,24 +20,29 @@ use winit::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 /// Create the GL display.
 pub fn create_gl_display(
     raw_display_handle: RawDisplayHandle,
-    _raw_window_handle: Option<RawWindowHandle>,
-    _prefer_egl: bool,
+    #[allow(
+        unused_variables,
+        reason = "the native window handle is consumed only by the Windows backend"
+    )]
+    raw_window_handle: Option<RawWindowHandle>,
+    #[allow(unused_variables, reason = "EGL preference is irrelevant to CGL and EGL-only builds")]
+    prefer_egl: bool,
 ) -> GlutinResult<Display> {
     #[cfg(target_os = "macos")]
     let preference = DisplayApiPreference::Cgl;
 
     #[cfg(windows)]
-    let raw_window_handle = _raw_window_handle.ok_or(ErrorKind::BadNativeWindow)?;
+    let raw_window_handle = raw_window_handle.ok_or(ErrorKind::BadNativeWindow)?;
 
     #[cfg(windows)]
-    let preference = if _prefer_egl {
+    let preference = if prefer_egl {
         DisplayApiPreference::EglThenWgl(Some(raw_window_handle))
     } else {
         DisplayApiPreference::WglThenEgl(Some(raw_window_handle))
     };
 
     #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-    let preference = if _prefer_egl {
+    let preference = if prefer_egl {
         DisplayApiPreference::EglThenGlx(Box::new(x11::register_xlib_error_hook))
     } else {
         DisplayApiPreference::GlxThenEgl(Box::new(x11::register_xlib_error_hook))

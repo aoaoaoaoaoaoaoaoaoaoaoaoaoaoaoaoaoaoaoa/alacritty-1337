@@ -15,15 +15,15 @@ _alacritty() {
 
     local context curcontext="$curcontext" state line
     _arguments "${_arguments_options[@]}" : \
-'--embed=[X11 window ID to embed Alacritty within (decimal or hexadecimal with "0x" prefix)]:EMBED:_default' \
-'--config-file=[Specify alternative configuration file \[default\: \$XDG_CONFIG_HOME/alacritty/alacritty.toml\]]:CONFIG_FILE:_files' \
+'--embed=[X11 window ID to embed alacritty-1337 within (decimal or hexadecimal with "0x" prefix)]:EMBED:_default' \
+'--config-file=[Specify alternative configuration file \[default\: \$XDG_CONFIG_HOME/alacritty-1337/alacritty.toml\]]:CONFIG_FILE:_files' \
 '--socket=[Path for IPC socket creation]:SOCKET:_files' \
 '--working-directory=[Start the shell in the specified working directory]:WORKING_DIRECTORY:_files' \
 '*-e+[Command and args to execute (must be last argument)]:COMMAND:_default' \
 '*--command=[Command and args to execute (must be last argument)]:COMMAND:_default' \
-'-T+[Defines the window title \[default\: Alacritty\]]:TITLE:_default' \
-'--title=[Defines the window title \[default\: Alacritty\]]:TITLE:_default' \
-'--class=[Defines window class/app_id on X11/Wayland \[default\: Alacritty\]]:general> | <general>,<instance:_default' \
+'-T+[Defines the window title \[default\: alacritty-1337\]]:TITLE:_default' \
+'--title=[Defines the window title \[default\: alacritty-1337\]]:TITLE:_default' \
+'--class=[Defines window class/app_id on X11/Wayland \[default\: alacritty-1337\]]:general> | <general>,<instance:_default' \
 '*-o+[Override configuration file options \[example\: '\''cursor.style="Beam"'\''\]]:OPTION:_default' \
 '*--option=[Override configuration file options \[example\: '\''cursor.style="Beam"'\''\]]:OPTION:_default' \
 '--print-events[Print all events to STDOUT]' \
@@ -37,10 +37,10 @@ _alacritty() {
 '-V[Print version]' \
 '--version[Print version]' \
 ":: :_alacritty_commands" \
-"*::: :->alacritty" \
+"*::: :->alacritty-1337" \
 && ret=0
     case $state in
-    (alacritty)
+    (alacritty-1337)
         words=($line[1] "${words[@]}")
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:alacritty-command-$line[1]:"
@@ -66,9 +66,9 @@ _arguments "${_arguments_options[@]}" : \
 '--working-directory=[Start the shell in the specified working directory]:WORKING_DIRECTORY:_files' \
 '*-e+[Command and args to execute (must be last argument)]:COMMAND:_default' \
 '*--command=[Command and args to execute (must be last argument)]:COMMAND:_default' \
-'-T+[Defines the window title \[default\: Alacritty\]]:TITLE:_default' \
-'--title=[Defines the window title \[default\: Alacritty\]]:TITLE:_default' \
-'--class=[Defines window class/app_id on X11/Wayland \[default\: Alacritty\]]:general> | <general>,<instance:_default' \
+'-T+[Defines the window title \[default\: alacritty-1337\]]:TITLE:_default' \
+'--title=[Defines the window title \[default\: alacritty-1337\]]:TITLE:_default' \
+'--class=[Defines window class/app_id on X11/Wayland \[default\: alacritty-1337\]]:general> | <general>,<instance:_default' \
 '*-o+[Override configuration file options \[example\: '\''cursor.style="Beam"'\''\]]:OPTION:_default' \
 '*--option=[Override configuration file options \[example\: '\''cursor.style="Beam"'\''\]]:OPTION:_default' \
 '--hold[Remain open after child process exit]' \
@@ -206,7 +206,7 @@ esac
 (( $+functions[_alacritty_commands] )) ||
 _alacritty_commands() {
     local commands; commands=(
-'msg:Send a message to the Alacritty socket' \
+'msg:Send a message to the alacritty-1337 socket' \
 'migrate:Migrate the configuration file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -215,7 +215,7 @@ _alacritty_commands() {
 (( $+functions[_alacritty__help_commands] )) ||
 _alacritty__help_commands() {
     local commands; commands=(
-'msg:Send a message to the Alacritty socket' \
+'msg:Send a message to the alacritty-1337 socket' \
 'migrate:Migrate the configuration file' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -234,9 +234,9 @@ _alacritty__help__migrate_commands() {
 (( $+functions[_alacritty__help__msg_commands] )) ||
 _alacritty__help__msg_commands() {
     local commands; commands=(
-'create-window:Create a new window in the same Alacritty process' \
-'config:Update the Alacritty configuration' \
-'get-config:Read runtime Alacritty configuration' \
+'create-window:Create a new window in the same alacritty-1337 process' \
+'config:Update the alacritty-1337 configuration' \
+'get-config:Read runtime alacritty-1337 configuration' \
     )
     _describe -t commands 'alacritty help msg commands' commands "$@"
 }
@@ -263,9 +263,9 @@ _alacritty__migrate_commands() {
 (( $+functions[_alacritty__msg_commands] )) ||
 _alacritty__msg_commands() {
     local commands; commands=(
-'create-window:Create a new window in the same Alacritty process' \
-'config:Update the Alacritty configuration' \
-'get-config:Read runtime Alacritty configuration' \
+'create-window:Create a new window in the same alacritty-1337 process' \
+'config:Update the alacritty-1337 configuration' \
+'get-config:Read runtime alacritty-1337 configuration' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'alacritty msg commands' commands "$@"
@@ -288,9 +288,9 @@ _alacritty__msg__get-config_commands() {
 (( $+functions[_alacritty__msg__help_commands] )) ||
 _alacritty__msg__help_commands() {
     local commands; commands=(
-'create-window:Create a new window in the same Alacritty process' \
-'config:Update the Alacritty configuration' \
-'get-config:Read runtime Alacritty configuration' \
+'create-window:Create a new window in the same alacritty-1337 process' \
+'config:Update the alacritty-1337 configuration' \
+'get-config:Read runtime alacritty-1337 configuration' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'alacritty msg help commands' commands "$@"

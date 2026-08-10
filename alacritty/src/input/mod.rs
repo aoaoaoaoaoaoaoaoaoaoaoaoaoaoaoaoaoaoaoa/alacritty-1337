@@ -722,9 +722,9 @@ impl<A: ActionContext> Processor<A> {
                 let new_scroll_px_x = columns * self.ctx.size_info().cell_width();
                 let new_scroll_px_y = lines * self.ctx.size_info().cell_height();
                 self.scroll_terminal(
-                    new_scroll_px_x as f64,
-                    new_scroll_px_y as f64,
-                    multiplier as f64,
+                    f64::from(new_scroll_px_x),
+                    f64::from(new_scroll_px_y),
+                    f64::from(multiplier),
                 );
             },
             MouseScrollDelta::PixelDelta(mut lpos) => {
@@ -742,7 +742,7 @@ impl<A: ActionContext> Processor<A> {
                             lpos.x = 0.;
                         }
 
-                        self.scroll_terminal(lpos.x, lpos.y, multiplier as f64);
+                        self.scroll_terminal(lpos.x, lpos.y, f64::from(multiplier));
                     },
                     _ => (),
                 }
@@ -875,7 +875,6 @@ impl<A: ActionContext> Processor<A> {
     pub fn on_touch_motion(&mut self, touch: TouchEvent) {
         let touch_purpose = self.ctx.touch_purpose();
         match touch_purpose {
-            TouchPurpose::None => (),
             // Handle transition from tap to scroll/select.
             TouchPurpose::Tap(start) => {
                 let delta_x = touch.location.x - start.location.x;
@@ -912,7 +911,7 @@ impl<A: ActionContext> Processor<A> {
                 self.scroll_terminal(0., delta_y, 1.0);
             },
             TouchPurpose::Select(_) => self.mouse_moved(touch.location),
-            TouchPurpose::ZoomPendingSlot(_) | TouchPurpose::Invalid(_) => (),
+            TouchPurpose::None | TouchPurpose::ZoomPendingSlot(_) | TouchPurpose::Invalid(_) => (),
         }
     }
 
@@ -940,7 +939,9 @@ impl<A: ActionContext> Processor<A> {
                 let remaining = if slots.0.id == touch.id { slots.1 } else { slots.0 };
                 *touch_purpose = TouchPurpose::ZoomPendingSlot(remaining);
             },
-            TouchPurpose::ZoomPendingSlot(_) => *touch_purpose = Default::default(),
+            TouchPurpose::ZoomPendingSlot(_) | TouchPurpose::Scroll(_) => {
+                *touch_purpose = Default::default();
+            },
             // Reset touch state once all slots were released.
             TouchPurpose::Invalid(slots) => {
                 let _ = slots.remove(&touch.id);
@@ -954,7 +955,6 @@ impl<A: ActionContext> Processor<A> {
                 self.mouse_input(ElementState::Released, MouseButton::Left);
             },
             // Reset touch state on scroll finish.
-            TouchPurpose::Scroll(_) => *touch_purpose = Default::default(),
             TouchPurpose::None => (),
         }
     }
@@ -1030,7 +1030,7 @@ impl<A: ActionContext> Processor<A> {
     /// The provided mode, mods, and key must match what is allowed by a binding
     /// for its action to be executed.
     fn process_mouse_bindings(&mut self, event: MouseEvent) -> bool {
-        let mode = BindingMode::new(self.ctx.terminal().mode(), self.ctx.search_active());
+        let mode = BindingMode::new(*self.ctx.terminal().mode(), self.ctx.search_active());
         let mouse_mode = self.ctx.mouse_mode();
         let mods = self.ctx.modifiers().state();
         let mouse_bindings = self.ctx.config().mouse_bindings().to_owned();

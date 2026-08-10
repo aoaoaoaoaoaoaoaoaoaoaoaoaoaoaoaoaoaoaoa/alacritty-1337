@@ -1,14 +1,23 @@
 [package]
-name = "alacritty"
-version = "0.18.0-dev"
-authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>"]
+name = "alacritty-1337"
+version = "1.0.0"
+authors = [
+    "Eternalist <main@eternalist.moe>",
+    "Christian Duerr <contact@christianduerr.com>",
+    "Joe Wilm <joe@jwilm.com>",
+]
 license = "Apache-2.0"
 description = "alacritty but it doesn't suck"
-readme = "README.md"
-homepage = "https://alacritty.org"
+readme = "../README.md"
+homepage = "https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337"
 repository = "https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337"
+publish = false
 edition.workspace = true
 rust-version.workspace = true
+
+[[bin]]
+name = "alacritty"
+path = "src/main.rs"
 
 [lints]
 workspace = true

@@ -2,11 +2,11 @@ ALACRITTY(1)
 
 # NAME
 
-Alacritty - A fast, cross-platform, OpenGL terminal emulator.
+alacritty-1337 - A fast, cross-platform, OpenGL terminal emulator.
 
 # SYNOPSIS
 
-Alacritty is a modern terminal emulator that comes with sensible defaults, but
+alacritty-1337 is a modern terminal emulator that comes with sensible defaults, but
 allows for extensive configuration. By integrating with other applications,
 rather than reimplementing their functionality, it manages to provide a flexible
 set of features with high performance.
@@ -55,7 +55,7 @@ set of features with high performance.
 
 	On Wayland the general class sets the _app\_id_, while the instance class is ignored.
 
-	Default: _Alacritty,Alacritty_
+	Default: _alacritty-1337,alacritty-1337_
 
 *-e, --command* _<COMMAND>..._
 
@@ -65,22 +65,26 @@ set of features with high performance.
 
 	Specify alternative configuration file.
 
-	Alacritty doesn't create the config file for you, but it looks for one in the
+	alacritty-1337 doesn't create the config file for you, but it looks for one in the
 	following locations on UNIX systems:
 
+		. _$XDG_CONFIG_HOME/alacritty-1337/alacritty.toml_
 		. _$XDG_CONFIG_HOME/alacritty/alacritty.toml_
 		. _$XDG_CONFIG_HOME/alacritty.toml_
+		. _$HOME/.config/alacritty-1337/alacritty.toml_
 		. _$HOME/.config/alacritty/alacritty.toml_
 		. _$HOME/.alacritty.toml_
+		. _/etc/alacritty-1337/alacritty.toml_
 		. _/etc/alacritty/alacritty.toml_
 
 	On Windows, the config file will be looked for in:
 
-		. _%APPDATA%\\alacritty\\alacritty.toml_
+		. _%APPDATA%\\alacritty-1337\\alacritty.toml_
+		. _%APPDATA%\\alacritty\\alacritty.toml_ (legacy)
 
 *--embed* _<PARENT>_
 
-	X11 window ID to embed Alacritty within (decimal or hexadecimal with _0x_ prefix).
+	X11 window ID to embed alacritty-1337 within (decimal or hexadecimal with _0x_ prefix).
 
 *-o, --option* _<OPTION>..._
 
@@ -96,7 +100,7 @@ set of features with high performance.
 
 	Defines the window title.
 
-	Default: _Alacritty_
+	Default: _alacritty-1337_
 
 *--working-directory* _<WORKING_DIRECTORY>_
 
@@ -142,9 +146,8 @@ set of features with high performance.
 
 # BUGS
 
-Found a bug? Please report it at _https://github.com/alacritty/alacritty/issues_.
+Found a bug? Please report it at _https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337/issues_.
 
 # MAINTAINERS
 
-- Christian Duerr <contact@christianduerr.com>
-- Kirill Chibisov <contact@kchibisov.com>
+- Eternalist <main@eternalist.moe>

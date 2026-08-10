@@ -110,7 +110,7 @@ impl From<winit::raw_window_handle::HandleError> for Error {
 
 /// A window which can be used for displaying the terminal.
 ///
-/// Wraps the underlying windowing library to provide a stable API in Alacritty.
+/// Wraps the underlying windowing library to provide a stable API in alacritty-1337.
 pub struct Window {
     /// Flag tracking that we have a frame we can draw.
     pub has_frame: bool,
@@ -156,7 +156,7 @@ impl Window {
             #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
             x11_visual,
             #[cfg(target_os = "macos")]
-            &options.window_tabbing_id.take(),
+            options.window_tabbing_id.take().as_deref(),
         );
 
         if let Some(position) = config.window.position {
@@ -348,7 +348,7 @@ impl Window {
     pub fn get_platform_window(
         _: &Identity,
         window_config: &WindowConfig,
-        tabbing_id: &Option<String>,
+        tabbing_id: Option<&str>,
     ) -> WindowAttributes {
         let mut window =
             WinitWindow::default_attributes().with_option_as_alt(window_config.option_as_alt());
@@ -476,8 +476,8 @@ impl Window {
         // NOTE: some compositors don't like excluding too much and try to render popup at the
         // bottom right corner of the provided area, so exclude just the full-width char to not
         // obscure the cursor and not render popup at the end of the window.
-        let width = size.cell_width() as f64 * 2.;
-        let height = size.cell_height as f64;
+        let width = f64::from(size.cell_width()) * 2.;
+        let height = f64::from(size.cell_height);
 
         self.window.set_ime_cursor_area(
             PhysicalPosition::new(nspot_x, nspot_y),

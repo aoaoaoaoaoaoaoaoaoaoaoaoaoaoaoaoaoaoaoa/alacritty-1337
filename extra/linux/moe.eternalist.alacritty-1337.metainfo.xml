@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<component type="desktop-application">
+  <id>moe.eternalist.alacritty-1337</id>
+
+  <developer id="moe.eternalist">
+    <name>Eternalist</name>
+  </developer>
+
+  <name>alacritty-1337</name>
+
+  <project_license>Apache-2.0</project_license>
+  <metadata_license>MIT</metadata_license>
+
+  <summary>A fast terminal emulator that doesn't suck</summary>
+  <description>
+    <p>
+      alacritty-1337 is a fast, cross-platform, OpenGL terminal emulator with
+      strict release gates and repaired X11 input-method handling.
+    </p>
+    <ul>
+      <li>Wayland native</li>
+      <li>X11 native</li>
+      <li>DE agnostic</li>
+    </ul>
+  </description>
+
+  <categories>
+    <category>TerminalEmulator</category>
+  </categories>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337/v1.0.0/extra/promo/alacritty-readme.png</image>
+      <caption>alacritty-1337 running Neovim</caption>
+    </screenshot>
+  </screenshots>
+
+  <url type="homepage">https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337</url>
+  <url type="bugtracker">https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337/issues</url>
+
+  <releases>
+    <release version="1.0.0" date="2026-08-10">
+      <description>
+        <p>First stable alacritty-1337 release.</p>
+      </description>
+    </release>
+  </releases>
+
+  <launchable type="desktop-id">alacritty-1337.desktop</launchable>
+
+  <content_rating type="oars-1.0" />
+</component>

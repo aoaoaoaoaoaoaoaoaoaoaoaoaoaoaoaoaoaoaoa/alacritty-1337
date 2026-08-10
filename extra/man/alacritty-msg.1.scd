@@ -2,12 +2,12 @@ ALACRITTY-MSG(1)
 
 # NAME
 
-alacritty-msg - Send messages to Alacritty.
+alacritty-msg - Send messages to alacritty-1337.
 
 # SYNOPSIS
 
-This command communicates with running Alacritty instances through a socket,
-making it possible to control Alacritty without directly accessing it.
+This command communicates with running alacritty-1337 instances through a socket,
+making it possible to control alacritty-1337 without directly accessing it.
 
 # OPTIONS
 
@@ -19,7 +19,7 @@ making it possible to control Alacritty without directly accessing it.
 
 *create-window*
 
-	Create a new window in the same Alacritty process.
+	Create a new window in the same alacritty-1337 process.
 
 	*FLAGS*
 		*--hold*
@@ -35,13 +35,13 @@ making it possible to control Alacritty without directly accessing it.
 
 			Defines the window title.
 
-			Default: _Alacritty_
+			Default: _alacritty-1337_
 
 		*--class* _<GENERAL>_ | _<GENERAL>_,_<INSTANCE>_
 
 			Defines window class/app_id on X11/Wayland.
 
-			Default: _Alacritty,Alacritty_
+			Default: _alacritty-1337,alacritty-1337_
 
 		*-o, --option* _<OPTION>..._
 
@@ -55,7 +55,7 @@ making it possible to control Alacritty without directly accessing it.
 
 *config*
 
-	Update the Alacritty configuration.
+	Update the alacritty-1337 configuration.
 
 	*ARGS*
 		*<CONFIG_OPTIONS>...*
@@ -80,7 +80,7 @@ making it possible to control Alacritty without directly accessing it.
 
 *get-config*
 
-	Read runtime Alacritty configuration.
+	Read runtime alacritty-1337 configuration.
 
 	*OPTIONS*
 		*-w, --window-id* _<WINDOW_ID>_
@@ -97,9 +97,8 @@ making it possible to control Alacritty without directly accessing it.
 
 # BUGS
 
-Found a bug? Please report it at _https://github.com/alacritty/alacritty/issues_.
+Found a bug? Please report it at _https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337/issues_.
 
 # MAINTAINERS
 
-- Christian Duerr <contact@christianduerr.com>
-- Kirill Chibisov <contact@kchibisov.com>
+- Eternalist <main@eternalist.moe>

@@ -111,7 +111,7 @@ impl GlyphCache {
             rasterizer.get_glyph(GlyphKey { font_key: key, character: 'm', size: font.size() })?;
 
         let mut metrics = rasterizer.metrics(key, font.size())?;
-        metrics.strikeout_position += font.glyph_offset.y as f32;
+        metrics.strikeout_position += f32::from(font.glyph_offset.y);
         Ok(metrics)
     }
 
@@ -215,8 +215,8 @@ impl GlyphCache {
                 builtin_font::builtin_glyph(
                     glyph_key.character,
                     &self.metrics,
-                    &self.font_offset,
-                    &self.glyph_offset,
+                    self.font_offset,
+                    self.glyph_offset,
                 )
             })
             .flatten()

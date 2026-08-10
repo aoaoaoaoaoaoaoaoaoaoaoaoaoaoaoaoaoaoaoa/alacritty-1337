@@ -1,8 +1,8 @@
 ALACRITTY-ESCAPES(7)
 
-# Alacritty Escape Sequence Support
+# alacritty-1337 Escape Sequence Support
 
-This list includes all escape sequences Alacritty currently supports.
+This list includes all escape sequences alacritty-1337 currently supports.
 
 # Legend
 
@@ -270,9 +270,8 @@ brevity.
 
 # BUGS
 
-Found a bug? Please report it at _https://github.com/alacritty/alacritty/issues_.
+Found a bug? Please report it at _https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337/issues_.
 
 # MAINTAINERS
 
-- Christian Duerr <contact@christianduerr.com>
-- Kirill Chibisov <contact@kchibisov.com>
+- Eternalist <main@eternalist.moe>

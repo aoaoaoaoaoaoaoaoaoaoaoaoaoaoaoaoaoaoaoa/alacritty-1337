@@ -38,6 +38,9 @@ unused_lifetimes = "deny"
 unused_qualifications = "deny"
 unused_results = "deny"
 unsafe_op_in_unsafe_fn = "deny"
+
+# House policy: intentional glob vocabularies save tokens; actual ambiguity
+# remains a name-resolution error.
 ambiguous_glob_imports = "allow"
 ambiguous_glob_reexports = "allow"
 hidden_glob_reexports = "allow"
@@ -60,49 +63,54 @@ todo = "deny"
 unimplemented = "deny"
 unwrap_used = "deny"
 
-cargo_common_metadata = "allow"
+# Result and panic sections would repeat delegated parser, PTY, and invariant semantics.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+
+# Two transitive Windows support stacks pin distinct non-runtime target packages.
 multiple_crate_versions = "allow"
 
+# House policy: direct and enum-variant glob imports are proper local notation.
 enum_glob_use = "allow"
 wildcard_imports = "allow"
 
-items_after_statements = "allow"
+# Renderer equations conventionally use compact coordinate and channel symbols.
 many_single_char_names = "allow"
-match_same_arms = "allow"
+
+# Public names retain their domain qualifier when re-exported outside their defining module.
 module_name_repetitions = "allow"
+
+# Input, grid, and renderer algorithms use meaningful paired names Clippy conflates.
 similar_names = "allow"
+
+# Serialized, CLI, and renderer fields retain role-qualified stable names.
 struct_field_names = "allow"
-too_many_arguments = "allow"
+
+# Large state machines and glyph dispatch tables are clearer with one visible control surface.
 too_many_lines = "allow"
-unnested_or_patterns = "allow"
 
-cast_lossless = "allow"
+# Bounded terminal, pixel, and GL dimensions are projected into narrower ABI widths.
 cast_possible_truncation = "allow"
+
+# Signed terminal and GL coordinate projections are bounded by grid and viewport invariants.
 cast_possible_wrap = "allow"
+
+# Rendering intentionally projects bounded integer geometry into subpixel floating-point space.
 cast_precision_loss = "allow"
+
+# Grid and pixel indices cross signed coordinate APIs only after their domain checks.
 cast_sign_loss = "allow"
-float_cmp = "allow"
-implicit_hasher = "allow"
-manual_let_else = "allow"
-map_unwrap_or = "allow"
-uninlined_format_args = "allow"
 
-ignored_unit_patterns = "allow"
+# Blanket #[must_use] on every pure getter would decorate APIs without clarifying ownership.
 must_use_candidate = "allow"
-needless_pass_by_value = "allow"
-no_effect_underscore_binding = "allow"
-redundant_closure_for_method_calls = "allow"
-ref_option = "allow"
-return_self_not_must_use = "allow"
-trivially_copy_pass_by_ref = "allow"
-unused_async = "allow"
-used_underscore_binding = "allow"
 
-# Contextual defaults, protocol-shaped state, and trait-facing methods are deliberate here.
+# Type inference already names the exact default target at these construction sites.
 default_trait_access = "allow"
+
+# Configuration and protocol booleans are independent axes, not one exclusive state.
 struct_excessive_bools = "allow"
+
+# Backend-facing method families retain a uniform receiver grammar across cfg variants.
 unused_self = "allow"
 
 [workspace.metadata.rust-starter]
@@ -113,8 +121,8 @@ feature_commands = [
     ["cargo", "test", "--locked", "-p", "alacritty_terminal", "--no-default-features"],
 ]
 linux_feature_commands = [
-    ["cargo", "test", "--locked", "-p", "alacritty", "--no-default-features", "--features", "x11"],
-    ["cargo", "test", "--locked", "-p", "alacritty", "--no-default-features", "--features", "wayland"],
+    ["cargo", "test", "--locked", "-p", "alacritty-1337", "--no-default-features", "--features", "x11"],
+    ["cargo", "test", "--locked", "-p", "alacritty-1337", "--no-default-features", "--features", "wayland"],
 ]
 doc_command = ["cargo", "doc", "--workspace", "--all-features", "--no-deps", "--locked"]
 canonicalize_commands = [
@@ -128,6 +136,7 @@ max_lines = 3000
 include = ["*.rs", "**/*.rs"]
 exclude = []
 
-# TODO: Validation of fix for #6978. Remove before next release and use released `x11-clipboard`.
+# crates.io 0.9.3 still lacks the selection-ownership fix from upstream issue #6978.
+# Keep the exact upstream commit until a release containing it is selected.
 [patch.crates-io]
 x11-clipboard = { git = "https://github.com/quininer/x11-clipboard.git", rev = "19ab2163cf0bd0db607e827a5214571990307866" }

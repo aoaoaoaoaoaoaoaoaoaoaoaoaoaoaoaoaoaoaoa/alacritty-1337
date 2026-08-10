@@ -145,12 +145,17 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(clippy::float_cmp, reason = "Bezier endpoints are exact boundary contracts")]
     fn css_bezier_has_exact_endpoints() {
         assert_eq!(cubic_bezier(0.25, 0.1, 0.25, 1., 0.), 0.);
         assert_eq!(cubic_bezier(0.25, 0.1, 0.25, 1., 1.), 1.);
     }
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "distinct easing curves must not collapse at the midpoint"
+    )]
     fn ease_and_ease_out_are_distinct() {
         assert_ne!(cubic_bezier(0.25, 0.1, 0.25, 1., 0.5), cubic_bezier(0., 0., 0.58, 1., 0.5));
     }

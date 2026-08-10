@@ -2,15 +2,15 @@
 Type=Application
 TryExec=alacritty
 Exec=alacritty
-Icon=Alacritty
+Icon=alacritty-1337
 Terminal=false
 Categories=System;TerminalEmulator;
 
-Name=Alacritty
+Name=alacritty-1337
 GenericName=Terminal
-Comment=A fast, cross-platform, OpenGL terminal emulator
+Comment=alacritty but it doesn't suck
 StartupNotify=true
-StartupWMClass=Alacritty
+StartupWMClass=alacritty-1337
 Actions=New;
 
 [Desktop Action New]

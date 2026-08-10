@@ -32,7 +32,7 @@ impl Display for Error {
         match self {
             Error::InvalidSize => write!(f, "Invalid proc_pidinfo return size"),
             Error::UnterminatedPath => write!(f, "Unterminated proc_pidinfo path"),
-            Error::Io(err) => write!(f, "Error getting current working directory: {}", err),
+            Error::Io(err) => write!(f, "Error getting current working directory: {err}"),
         }
     }
 }

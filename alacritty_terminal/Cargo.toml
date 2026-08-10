@@ -1,12 +1,17 @@
 [package]
 name = "alacritty_terminal"
 version = "0.26.1-dev"
-authors = ["Christian Duerr <contact@christianduerr.com>", "Joe Wilm <joe@jwilm.com>"]
+authors = [
+    "Eternalist <main@eternalist.moe>",
+    "Christian Duerr <contact@christianduerr.com>",
+    "Joe Wilm <joe@jwilm.com>",
+]
 license = "Apache-2.0"
 description = "Library for writing terminal emulators"
 readme = "../README.md"
-homepage = "https://alacritty.org"
+homepage = "https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337"
 repository = "https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337"
+publish = false
 edition.workspace = true
 rust-version.workspace = true
 

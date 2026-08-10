@@ -655,7 +655,7 @@ impl<T> Term<T> {
     }
 
     /// Resize terminal to new dimensions.
-    pub fn resize<S: Dimensions>(&mut self, size: S) {
+    pub fn resize<S: Dimensions>(&mut self, size: &S) {
         let old_cols = self.columns();
         let old_lines = self.screen_lines();
 
@@ -1064,10 +1064,7 @@ impl<T: EventListener> Handler for Term<T> {
     #[inline(never)]
     fn input(&mut self, c: char) {
         // Number of cells the char will occupy.
-        let width = match c.width() {
-            Some(width) => width,
-            None => return,
-        };
+        let Some(width) = c.width() else { return };
 
         // Handle zero-width characters.
         if width == 0 {
@@ -1869,7 +1866,7 @@ impl<T: EventListener> Handler for Term<T> {
     #[inline]
     fn set_hyperlink(&mut self, hyperlink: Option<Hyperlink>) {
         trace!("Setting hyperlink: {hyperlink:?}");
-        self.grid.cursor.template.set_hyperlink(hyperlink.map(|e| e.into()));
+        self.grid.cursor.template.set_hyperlink(hyperlink.map(Into::into));
     }
 
     /// Set a terminal attribute.
@@ -2457,7 +2454,9 @@ pub mod test {
         let lines: Vec<&str> = content.split('\n').collect();
         let num_cols = lines
             .iter()
-            .map(|line| line.chars().filter(|c| *c != '\r').filter_map(|c| c.width()).sum())
+            .map(|line| {
+                line.chars().filter(|c| *c != '\r').filter_map(UnicodeWidthChar::width).sum()
+            })
             .max()
             .unwrap_or(0);
 

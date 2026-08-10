@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Alacritty are documented in this file.
+All notable changes to alacritty-1337 are documented in this file.
 The sections should follow the order `Packaging`, `Added`, `Changed`, `Fixed` and `Removed`.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
@@ -8,17 +8,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Notable changes to the `alacritty_terminal` crate are documented in its
 [CHANGELOG](./alacritty_terminal/CHANGELOG.md).
 
-## 0.18.0-dev
+## 1.0.0 - 2026-08-10
 
 ### Packaging
 
+- Established `alacritty-1337` as the application, desktop, AppStream, macOS,
+  Windows, runtime, and package identity while retaining the `alacritty` binary
+- Added a maximally compressed, CPU-native Arch package owned by pacman
+- Added prepublication macOS DMG, Windows portable/MSI, and Linux integration
+  artifact lifecycle checks with a SHA-256 inventory
+- Pinned the Rust 1.97.1 release toolchain and dependency-provenance policy
 - Fixed `alacritty-escapes(7)` manpage missing from macOS install
-- Added the `Open Alacritty here` entry to the right-click context menu for folders on Windows
+- Added the `Open alacritty-1337 here` entry to the right-click context menu for folders on Windows
+
+### Changed
+
+- Made `alacritty-1337` the default window title, X11 class, and Wayland app ID
+- Made the `alacritty-1337` config and runtime namespaces canonical while
+  retaining legacy `alacritty` config discovery
+- Ratcheted the repository to strict Rust 1.97.1 linting, formatting, testing,
+  and platform-specific feature gates
+- Contracted release and installation documentation around the fork's actual artifacts
 
 ### Fixed
 
 - Spurious "Failed to set new owner of XCB selection" warnings on X11
 - Lacking permissions to launch software sending Apple events
+- X11 terminals intermittently entering a silent keyboard-input sink after IME
+  context churn
 
 ## 0.17.0
 

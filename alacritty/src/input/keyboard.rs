@@ -19,7 +19,7 @@ use crate::scheduler::{TimerId, Topic};
 
 impl<A: ActionContext> Processor<A> {
     /// Process key input.
-    pub fn key_input(&mut self, key: KeyEvent) {
+    pub fn key_input(&mut self, key: &KeyEvent) {
         // IME input will be applied on commit and shouldn't trigger key bindings.
         if self.ctx.display().ime.preedit().is_some() {
             return;
@@ -57,7 +57,7 @@ impl<A: ActionContext> Processor<A> {
         self.reset_search_delay();
 
         // Key bindings suppress the character input.
-        if self.process_key_bindings(&key) {
+        if self.process_key_bindings(key) {
             return;
         }
 
@@ -75,10 +75,10 @@ impl<A: ActionContext> Processor<A> {
         }
 
         // Mask `Alt` modifier from input when we won't send esc.
-        let mods = if self.alt_send_esc(&key, text) { mods } else { mods & !ModifiersState::ALT };
+        let mods = if self.alt_send_esc(key, text) { mods } else { mods & !ModifiersState::ALT };
 
-        let build_key_sequence = Self::should_build_sequence(&key, text, mode, mods);
-        let is_modifier_key = Self::is_modifier_key(&key);
+        let build_key_sequence = Self::should_build_sequence(key, text, mode, mods);
+        let is_modifier_key = Self::is_modifier_key(key);
 
         let bytes = if build_key_sequence {
             build_sequence(key, mods, mode)
@@ -133,10 +133,7 @@ impl<A: ActionContext> Processor<A> {
     fn is_modifier_key(key: &KeyEvent) -> bool {
         matches!(
             key.logical_key.as_ref(),
-            Key::Named(NamedKey::Shift)
-                | Key::Named(NamedKey::Control)
-                | Key::Named(NamedKey::Alt)
-                | Key::Named(NamedKey::Super)
+            Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)
         )
     }
 
@@ -158,9 +155,7 @@ impl<A: ActionContext> Processor<A> {
                     && (mods != ModifiersState::SHIFT
                         || matches!(
                             key.logical_key,
-                            Key::Named(NamedKey::Tab)
-                                | Key::Named(NamedKey::Enter)
-                                | Key::Named(NamedKey::Backspace)
+                            Key::Named(NamedKey::Tab | NamedKey::Enter | NamedKey::Backspace)
                         ))));
 
         match key.logical_key {
@@ -176,7 +171,7 @@ impl<A: ActionContext> Processor<A> {
     /// The provided mode, mods, and key must match what is allowed by a binding
     /// for its action to be executed.
     fn process_key_bindings(&mut self, key: &KeyEvent) -> bool {
-        let mode = BindingMode::new(self.ctx.terminal().mode(), self.ctx.search_active());
+        let mode = BindingMode::new(*self.ctx.terminal().mode(), self.ctx.search_active());
         let mods = self.ctx.modifiers().state();
 
         // Don't suppress char if no bindings were triggered.
@@ -235,10 +230,7 @@ impl<A: ActionContext> Processor<A> {
         // Trigger key bindings for hints.
         for i in 0..self.ctx.config().hints.enabled.len() {
             let hint = &self.ctx.config().hints.enabled[i];
-            let binding = match hint.binding.as_ref() {
-                Some(binding) => binding,
-                None => continue,
-            };
+            let Some(binding) = hint.binding.as_ref() else { continue };
 
             let key = match (&binding.key, &logical_key) {
                 (BindingKey::Scancode(_), _) => BindingKey::Scancode(key.physical_key),
@@ -256,7 +248,7 @@ impl<A: ActionContext> Processor<A> {
     }
 
     /// Handle key release.
-    fn key_release(&mut self, key: KeyEvent, mode: TermMode, mods: ModifiersState) {
+    fn key_release(&mut self, key: &KeyEvent, mode: TermMode, mods: ModifiersState) {
         if !mode.contains(TermMode::REPORT_EVENT_TYPES)
             || mode.contains(TermMode::VI)
             || self.ctx.search_active()
@@ -267,12 +259,10 @@ impl<A: ActionContext> Processor<A> {
 
         // Mask `Alt` modifier from input when we won't send esc.
         let text = key.text_with_all_modifiers().unwrap_or_default();
-        let mods = if self.alt_send_esc(&key, text) { mods } else { mods & !ModifiersState::ALT };
+        let mods = if self.alt_send_esc(key, text) { mods } else { mods & !ModifiersState::ALT };
 
         let bytes = match key.logical_key.as_ref() {
-            Key::Named(NamedKey::Enter)
-            | Key::Named(NamedKey::Tab)
-            | Key::Named(NamedKey::Backspace)
+            Key::Named(NamedKey::Enter | NamedKey::Tab | NamedKey::Backspace)
                 if !mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) =>
             {
                 return;
@@ -299,7 +289,7 @@ impl<A: ActionContext> Processor<A> {
 ///
 /// The key sequences for `APP_KEYPAD` and alike are handled inside the bindings.
 #[inline(never)]
-fn build_sequence(key: KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8> {
+fn build_sequence(key: &KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8> {
     let mut modifiers = mods.into();
 
     let kitty_seq = mode.intersects(
@@ -324,16 +314,13 @@ fn build_sequence(key: KeyEvent, mods: ModifiersState, mode: TermMode) -> Vec<u8
     });
 
     let sequence_base = context
-        .try_build_numpad(&key)
-        .or_else(|| context.try_build_named_kitty(&key))
-        .or_else(|| context.try_build_named_normal(&key, associated_text.is_some()))
-        .or_else(|| context.try_build_control_char_or_mod(&key, &mut modifiers))
-        .or_else(|| context.try_build_textual(&key, associated_text));
+        .try_build_numpad(key)
+        .or_else(|| context.try_build_named_kitty(key))
+        .or_else(|| context.try_build_named_normal(key, associated_text.is_some()))
+        .or_else(|| context.try_build_control_char_or_mod(key, &mut modifiers))
+        .or_else(|| context.try_build_textual(key, associated_text));
 
-    let (payload, terminator) = match sequence_base {
-        Some(SequenceBase { payload, terminator }) => (payload, terminator),
-        _ => return Vec::new(),
-    };
+    let Some(SequenceBase { payload, terminator }) = sequence_base else { return Vec::new() };
 
     let mut payload = format!("\x1b[{payload}");
 
@@ -538,10 +525,7 @@ impl SequenceBuilder {
         key: &KeyEvent,
         has_associated_text: bool,
     ) -> Option<SequenceBase> {
-        let named = match key.logical_key {
-            Key::Named(named) => named,
-            _ => return None,
-        };
+        let Key::Named(named) = key.logical_key else { return None };
 
         // The default parameter is 1, so we can omit it.
         let one_based =
@@ -597,10 +581,7 @@ impl SequenceBuilder {
             return None;
         }
 
-        let named = match key.logical_key {
-            Key::Named(named) => named,
-            _ => return None,
-        };
+        let Key::Named(named) = key.logical_key else { return None };
 
         let base = match named {
             NamedKey::Tab => "9",

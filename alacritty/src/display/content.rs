@@ -102,7 +102,7 @@ impl<'a> RenderableContent<'a> {
 
     /// Get the RGB value for a color index.
     pub fn color(&self, color: usize) -> Rgb {
-        self.terminal_content.colors[color].map(Rgb).unwrap_or(self.colors[color])
+        self.terminal_content.colors[color].map_or(self.colors[color], Rgb)
     }
 
     pub fn selection_range(&self) -> Option<SelectionRange> {
@@ -289,10 +289,7 @@ impl RenderableCell {
         let hyperlink = cell.hyperlink();
 
         let extra = (zerowidth.is_some() || hyperlink.is_some()).then(|| {
-            Box::new(RenderableCellExtra {
-                zerowidth: zerowidth.map(|zerowidth| zerowidth.to_vec()),
-                hyperlink,
-            })
+            Box::new(RenderableCellExtra { zerowidth: zerowidth.map(<[char]>::to_vec), hyperlink })
         });
 
         Some(RenderableCell { character, point, fg, bg, bg_alpha, underline, flags, extra })
@@ -490,8 +487,7 @@ impl Hint<'_> {
         let hint_char = self.labels[self.matches.index]
             .get(label_position)
             .copied()
-            .map(|c| (Some(c), is_first))
-            .unwrap_or((None, false));
+            .map_or((None, false), |c| (Some(c), is_first));
 
         Some(hint_char)
     }

@@ -25,6 +25,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "derive entrypoints own their one-shot syntax tree"
+)]
 pub fn derive_direct(ident: Ident, generics: Generics) -> TokenStream2 {
     quote! {
         impl <#generics> alacritty_config::SerdeReplace for #ident <#generics> {
@@ -37,6 +41,10 @@ pub fn derive_direct(ident: Ident, generics: Generics) -> TokenStream2 {
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "derive entrypoints own their one-shot syntax tree"
+)]
 pub fn derive_recursive<T>(
     ident: Ident,
     generics: Generics,

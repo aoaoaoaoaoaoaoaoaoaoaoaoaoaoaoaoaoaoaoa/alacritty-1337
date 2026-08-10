@@ -1,7 +1,7 @@
 # Maintainer: aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa
 
 pkgname=alacritty-1337
-pkgver=0.18.0_dev
+pkgver=1.0.0
 pkgrel=1
 pkgdesc="alacritty but it doesn't suck"
 arch=('x86_64')
@@ -15,15 +15,8 @@ makedepends=('cargo' 'cmake' 'desktop-file-utils' 'gdb' 'git' 'libxcb' 'rust' 's
 checkdepends=('ttf-dejavu')
 optdepends=('ncurses: for the alacritty terminfo database')
 options=('!debug' '!lto')
-source=("$pkgname::git+$url.git#branch=master")
+source=("$pkgname::git+$url.git#${ALACRITTY_SOURCE_REF:-tag=v$pkgver}")
 sha256sums=('SKIP')
-
-pkgver() {
-  cd "$pkgname"
-  printf '0.18.0_dev.r%s.g%s' \
-    "$(git rev-list --count v0.17.0..HEAD)" \
-    "$(git rev-parse --short=12 HEAD)"
-}
 
 prepare() {
   cd "$pkgname"
@@ -33,7 +26,7 @@ prepare() {
 build() {
   cd "$pkgname"
   CARGO_INCREMENTAL=0 RUSTFLAGS='-C target-cpu=native' \
-    cargo build --frozen --profile release-native -p alacritty --bin alacritty
+    cargo build --frozen --profile release-native -p alacritty-1337 --bin alacritty
 }
 
 check() {
@@ -50,11 +43,11 @@ package() {
 
   install -Dm755 "$target_dir/release-native/alacritty" "$pkgdir/usr/bin/alacritty"
   desktop-file-install -m 644 --dir "$pkgdir/usr/share/applications" \
-    extra/linux/Alacritty.desktop
-  install -Dm644 extra/linux/org.alacritty.Alacritty.appdata.xml \
-    "$pkgdir/usr/share/metainfo/org.alacritty.Alacritty.appdata.xml"
+    extra/linux/alacritty-1337.desktop
+  install -Dm644 extra/linux/moe.eternalist.alacritty-1337.metainfo.xml \
+    "$pkgdir/usr/share/metainfo/moe.eternalist.alacritty-1337.metainfo.xml"
   install -Dm644 extra/logo/compat/alacritty-term.svg \
-    "$pkgdir/usr/share/pixmaps/Alacritty.svg"
+    "$pkgdir/usr/share/pixmaps/alacritty-1337.svg"
   install -Dm644 extra/completions/alacritty.bash \
     "$pkgdir/usr/share/bash-completion/completions/alacritty"
   install -Dm644 extra/completions/alacritty.fish \

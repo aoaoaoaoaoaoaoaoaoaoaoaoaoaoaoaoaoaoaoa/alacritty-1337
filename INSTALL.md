@@ -1,380 +1,141 @@
-# Cargo Installation
+# Install alacritty-1337
 
-If you're just interested in the Alacritty binary and you don't need the
-[terminfo file](#terminfo), [desktop entry](#desktop-entry),
-[manual page](#manual-page) or [shell completions](#shell-completions), you can
-install it directly through cargo:
+`alacritty-1337` is distributed from the
+[GitHub repository](https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337).
+The executable remains named `alacritty` for command, config, terminfo, and shell
+compatibility.
 
-```sh
-cargo install alacritty
-```
+## Release Artifacts
 
-Note that you will still need to install the dependencies for your OS of choice.
-Please refer to the [Dependencies](#dependencies) section.
+Release `v1.0.0` provides:
 
-# Manual Installation
+- a universal macOS disk image;
+- a Windows x86_64 per-user MSI and portable executable;
+- Linux desktop, AppStream, icon, manual, completion, and terminfo sources;
+- GitHub's source archives; and
+- `SHA256SUMS` covering every attached artifact.
 
-1. [Prerequisites](#prerequisites)
-    1. [Source Code](#clone-the-source-code)
-    2. [Rust Compiler](#install-the-rust-compiler-with-rustup)
-    3. [Dependencies](#dependencies)
-        1. [Debian/Ubuntu](#debianubuntu)
-        2. [Arch Linux](#arch-linux)
-        3. [Fedora](#fedora)
-        4. [CentOS/RHEL 7](#centosrhel-7)
-        5. [openSUSE](#opensuse)
-        6. [Slackware](#slackware)
-        7. [Void Linux](#void-linux)
-        8. [FreeBSD](#freebsd)
-        9. [OpenBSD](#openbsd)
-        10. [Solus](#solus)
-        11. [NixOS/Nixpkgs](#nixosnixpkgs)
-        12. [Gentoo](#gentoo)
-        13. [GNU Guix](#gnu-guix)
-        14. [Alpine Linux](#alpine-linux)
-        15. [Windows](#windows)
-        16. [Other](#other)
-2. [Building](#building)
-    1. [Linux/Windows/BSD](#linux--windows--bsd)
-    2. [macOS](#macos)
-3. [Post Build](#post-build)
-    1. [Terminfo](#terminfo)
-    2. [Desktop Entry](#desktop-entry)
-    3. [Manual Page](#manual-page)
-    4. [Shell completions](#shell-completions)
-        1. [Zsh](#zsh)
-        2. [Bash](#bash)
-        3. [Fish](#fish)
-
-## Prerequisites
-
-### Clone the source code
-
-Before compiling Alacritty, you'll have to first clone the source code:
+Download all files from the
+[v1.0.0 release](https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337/releases/tag/v1.0.0).
+Verify an artifact from the same directory as `SHA256SUMS`:
 
 ```sh
-git clone https://github.com/alacritty/alacritty.git
-cd alacritty
+sha256sum --check SHA256SUMS
 ```
 
-### Install the Rust compiler with `rustup`
+## macOS
 
-1. Install [`rustup.rs`](https://rustup.rs/).
+Open `alacritty-1337-v1.0.0.dmg` and move `alacritty-1337.app` to
+`Applications`. The bundle contains native x86_64 and arm64 code.
 
-3. To make sure you have the right Rust compiler installed, run
+The GitHub artifact is ad-hoc signed, not Apple Developer-ID signed or notarized.
+Systems that require notarization can build from source instead; no
+Gatekeeper-frictionless installation is claimed.
 
-   ```sh
-   rustup override set stable
-   rustup update stable
-   ```
+## Windows
 
-### Dependencies
+Run `alacritty-1337-v1.0.0-installer.msi` for a per-user installation. It puts
+`alacritty.exe` below `%LOCALAPPDATA%\Programs\alacritty-1337`, adds that directory
+to the user's `PATH`, creates a Start Menu shortcut, and adds the
+`Open alacritty-1337 here` Explorer actions. Uninstalling the MSI removes those
+owned entries.
 
-These are the minimum dependencies required to build Alacritty, please note
-that with some setups additional dependencies might be desired.
+`alacritty-1337-v1.0.0-portable.exe` is the same application without an
+installer. Rename it to `alacritty.exe` if command-name compatibility matters.
 
-If you're running Wayland with an Nvidia GPU, you'll likely want the EGL
-drivers installed too (these are called `libegl1-mesa-dev` on Ubuntu).
+## Build From Source
 
-#### Debian/Ubuntu
+The release requires Rust 1.97.1. Install CMake, pkg-config, FreeType,
+Fontconfig, libxcb, and libxkbcommon development files for Linux builds. X11
+also requires Xcursor, Xi, and Xrandr development files. macOS requires Xcode
+command-line tools. Windows requires the MSVC Rust target and Visual Studio
+Build Tools.
 
-If you'd like to build a local version manually, you need a few extra libraries
-to build Alacritty. Here's an apt command that should install all of them. If
-something is still found to be missing, please open an issue.
+Acquire the exact release and select its toolchain:
 
 ```sh
-apt install cmake g++ pkg-config libfontconfig1-dev libxcb-xfixes0-dev libxkbcommon-dev python3
+git clone https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337.git
+cd alacritty-1337
+git checkout --detach v1.0.0
+rustup toolchain install 1.97.1 --profile minimal
 ```
 
-#### Arch Linux
-
-On Arch Linux, you need a few extra libraries to build Alacritty. Here's a
-`pacman` command that should install all of them. If something is still found
-to be missing, please open an issue.
+Build the locked release:
 
 ```sh
-pacman -S cmake freetype2 fontconfig pkg-config make libxcb libxkbcommon python
+cargo +1.97.1 build --locked --release -p alacritty-1337 --bin alacritty
+target_dir=$(cargo +1.97.1 metadata --locked --no-deps --format-version 1 \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
+"$target_dir/release/alacritty" --version
 ```
 
-#### Fedora
+The final command must print `alacritty-1337 1.0.0`. Cargo may place its target
+directory outside the checkout; querying metadata avoids assuming otherwise.
 
-On Fedora, you need a few extra libraries to build Alacritty. Here's a `dnf`
-command that should install all of them. If something is still found to be
-missing, please open an issue.
+Linux feature-specific builds are available when a host supports only one
+display stack:
 
 ```sh
-dnf install cmake freetype-devel fontconfig-devel libxcb-devel libxkbcommon-devel g++
+cargo +1.97.1 build --locked --release -p alacritty-1337 \
+  --no-default-features --features x11
+cargo +1.97.1 build --locked --release -p alacritty-1337 \
+  --no-default-features --features wayland
 ```
 
-#### CentOS/RHEL 7
+FreeBSD remains best-effort source compatibility. It has no 1.0 release
+artifact or canonical release gate.
 
-On CentOS/RHEL 7, you need a few extra libraries to build Alacritty. Here's a `yum`
-command that should install all of them. If something is still found to be
-missing, please open an issue.
+## Arch Package
+
+Arch users building on the target machine can produce the private native
+package:
 
 ```sh
-yum install cmake freetype-devel fontconfig-devel libxcb-devel libxkbcommon-devel xcb-util-devel
-yum group install "Development Tools"
+packaging/arch/build-package
 ```
 
-#### RHEL 8
-
-On RHEL 8, like RHEL 7, you need a few extra libraries to build Alacritty. Here's a `dnf`
-command that should install all of them. If something is still found to be
-missing, please open an issue.
+The build uses fat LTO, one codegen unit, `target-cpu=native`, stripped symbols,
+and zstd ultra level 22. It is intentionally machine-specific and should not be
+redistributed as a generic x86_64 binary. Install it through pacman so every
+global file remains package-owned:
 
 ```sh
-dnf install cmake freetype-devel fontconfig-devel libxcb-devel libxkbcommon-devel
-dnf group install "Development Tools"
+sudo pacman -U packaging/arch/alacritty-1337-1.0.0-1-x86_64.pkg.tar.zst
 ```
 
-#### openSUSE
+The package provides and replaces `alacritty`; pacman will request confirmation
+before replacing a distribution package.
 
-On openSUSE, you need a few extra libraries to build Alacritty. Here's
-a `zypper` command that should install all of them. If something is
-still found to be missing, please open an issue.
+## Configuration
 
-```sh
-zypper install cmake freetype-devel fontconfig-devel libxcb-devel libxkbcommon-devel gcc-c++
-```
+The config filename and schema remain `alacritty.toml`. The first existing path
+wins. On Unix, the principal search order is:
 
-#### Slackware
+1. `$XDG_CONFIG_HOME/alacritty-1337/alacritty.toml`
+2. `$XDG_CONFIG_HOME/alacritty/alacritty.toml` (legacy)
+3. `$XDG_CONFIG_HOME/alacritty.toml` (legacy)
+4. `$HOME/.config/alacritty-1337/alacritty.toml`
+5. `$HOME/.config/alacritty/alacritty.toml` (legacy)
+6. `$HOME/.alacritty.toml` (legacy)
+7. `/etc/alacritty-1337/alacritty.toml`
+8. `/etc/alacritty/alacritty.toml` (legacy)
 
-Compiles out of the box for 14.2
+Windows checks `%APPDATA%\alacritty-1337\alacritty.toml` before the legacy
+`%APPDATA%\alacritty\alacritty.toml`. Existing users do not need to move their
+configuration.
 
-#### Void Linux
+See `extra/man/alacritty.5.scd` for the complete format and
+`extra/man/alacritty-bindings.5.scd` for bindings.
 
-On [Void Linux](https://voidlinux.org), install following packages before
-compiling Alacritty:
+## Removal
 
-```sh
-xbps-install cmake freetype-devel expat-devel fontconfig-devel libxcb-devel pkg-config python3
-```
+- Arch: `sudo pacman -R alacritty-1337`
+- Windows MSI: uninstall `alacritty-1337` from Installed Apps
+- macOS: remove `alacritty-1337.app`
+- portable/source builds: remove only the copied executable or dedicated build tree
 
-#### FreeBSD
+Removal does not delete user configuration. Delete it separately only when that
+is your intent.
 
-On FreeBSD, you need a few extra libraries to build Alacritty. Here's a `pkg`
-command that should install all of them. If something is still found to be
-missing, please open an issue.
-
-```sh
-pkg install cmake freetype2 fontconfig pkgconf python3
-```
-
-#### OpenBSD
-
-On OpenBSD 6.5, you need [Xenocara](https://xenocara.org) and Rust to build
-Alacritty, plus Python 3 to build its XCB dependency. If something is still
-found to be missing, please open an issue.
-
-```sh
-pkg_add rust python
-```
-
-Select the package for Python 3 (e.g. `python-3.6.8p0`) when prompted.
-
-The default user limits in OpenBSD are insufficient to build Alacritty. A
-`datasize-cur` of at least 3GB is recommended (see [login.conf](https://man.openbsd.org/login.conf)).
-
-#### Solus
-
-On [Solus](https://solus-project.com/), you need a few extra libraries to build
-Alacritty. Here's a `eopkg` command that should install all of them. If
-something is still found to be missing, please open an issue.
-
-```sh
-eopkg install fontconfig-devel
-```
-
-#### NixOS/Nixpkgs
-
-The following command can be used to get a shell with all development
-dependencies on [NixOS](https://nixos.org).
-
-```sh
-nix-shell -A alacritty '<nixpkgs>'
-```
-
-#### Gentoo
-
-On Gentoo, you need a few extra libraries to build Alacritty. The following
-command should install all of them. If something is still found to be missing,
-please open an issue.
-
-```sh
-emerge --onlydeps x11-terms/alacritty
-```
-
-#### GNU Guix
-
-The following command can be used to get a shell with all development
-dependencies on [GNU Guix](https://guix.gnu.org/).
-
-```sh
-guix environment alacritty
-```
-
-#### Alpine Linux
-
-On Alpine Linux, you need a few extra libraries to build Alacritty. Here's an
-`apk` command that should install all of them. If something is still found to
-be missing, please open an issue.
-
-```sh
-sudo apk add cmake pkgconf freetype-dev fontconfig-dev python3 libxcb-dev
-```
-
-#### Windows
-
-On windows you will need to have the `{architecture}-pc-windows-msvc` toolchain
-installed as well as [Clang 3.9 or greater](http://releases.llvm.org/download.html).
-
-#### Other
-
-If you build Alacritty on another distribution, we would love some help
-filling in this section of the README.
-
-## Building
-
-### Linux / Windows / BSD
-
-```sh
-cargo build --release
-```
-
-On Linux/BSD, if it is desired to build Alacritty without support for either the
-X11 or Wayland rendering backend the following commands can be used.
-
-```sh
-# Force support for only Wayland
-cargo build --release --no-default-features --features=wayland
-
-# Force support for only X11
-cargo build --release --no-default-features --features=x11
-```
-
-If all goes well, this should place a binary at `target/release/alacritty`.
-
-### macOS
-
-```sh
-make app
-cp -r target/release/osx/Alacritty.app /Applications/
-```
-
-#### Universal Binary
-
-The following will build an executable that runs on both x86 and ARM macos
-architectures:
-
-```sh
-rustup target add x86_64-apple-darwin aarch64-apple-darwin
-make app-universal
-```
-
-## Post Build
-
-There are some extra things you might want to set up after installing Alacritty.
-All the post build instruction assume you're still inside the Alacritty
-repository.
-
-### Terminfo
-
-To make sure Alacritty works correctly, either the `alacritty` or
-`alacritty-direct` terminfo must be used. The `alacritty` terminfo will be
-picked up automatically if it is installed.
-
-If the following command returns without any errors, the `alacritty` terminfo is
-already installed:
-
-```sh
-infocmp alacritty
-```
-
-If it is not present already, you can install it globally with the following
-command:
-
-```
-sudo tic -xe alacritty,alacritty-direct extra/alacritty.info
-```
-
-### Desktop Entry
-
-Many Linux and BSD distributions support desktop entries for adding applications
-to system menus. This will install the desktop entry for Alacritty:
-
-```sh
-sudo cp target/release/alacritty /usr/local/bin # or anywhere else in $PATH
-sudo cp extra/logo/alacritty-term.svg /usr/share/pixmaps/Alacritty.svg
-sudo desktop-file-install extra/linux/Alacritty.desktop
-sudo update-desktop-database
-```
-
-If you are having problems with Alacritty's logo, you can replace it with
-prerendered PNGs and simplified SVGs available in the `extra/logo/compat`
-directory.
-
-### Manual Page
-
-Installing the manual page requires the additional dependencies `gzip` and `scdoc`.
-
-```sh
-sudo mkdir -p /usr/local/share/man/man1
-sudo mkdir -p /usr/local/share/man/man5
-sudo mkdir -p /usr/local/share/man/man7
-scdoc < extra/man/alacritty.1.scd | gzip -c | sudo tee /usr/local/share/man/man1/alacritty.1.gz > /dev/null
-scdoc < extra/man/alacritty-msg.1.scd | gzip -c | sudo tee /usr/local/share/man/man1/alacritty-msg.1.gz > /dev/null
-scdoc < extra/man/alacritty.5.scd | gzip -c | sudo tee /usr/local/share/man/man5/alacritty.5.gz > /dev/null
-scdoc < extra/man/alacritty-bindings.5.scd | gzip -c | sudo tee /usr/local/share/man/man5/alacritty-bindings.5.gz > /dev/null
-scdoc < extra/man/alacritty-escapes.7.scd | gzip -c | sudo tee /usr/local/share/man/man7/alacritty-escapes.7.gz > /dev/null
-```
-
-### Shell completions
-
-To get automatic completions for Alacritty's flags and arguments you can install the provided shell completions.
-
-#### Zsh
-
-To install the completions for zsh, you can place the `extra/completions/_alacritty` file in any
-directory referenced by `$fpath`.
-
-If you do not already have such a directory registered through your `~/.zshrc`, you can add one like this:
-
-```sh
-mkdir -p ${ZDOTDIR:-~}/.zsh_functions
-echo 'fpath+=${ZDOTDIR:-~}/.zsh_functions' >> ${ZDOTDIR:-~}/.zshrc
-```
-
-Then copy the completion file to this directory:
-
-```sh
-cp extra/completions/_alacritty ${ZDOTDIR:-~}/.zsh_functions/_alacritty
-```
-
-#### Bash
-
-To install the completions for bash, you can `source` the `extra/completions/alacritty.bash` file
-in your `~/.bashrc` file.
-
-If you do not plan to delete the source folder of alacritty, you can run
-
-```sh
-echo "source $(pwd)/extra/completions/alacritty.bash" >> ~/.bashrc
-```
-
-Otherwise you can copy it to the `~/.bash_completion` folder and source it from there:
-
-```sh
-mkdir -p ~/.bash_completion
-cp extra/completions/alacritty.bash ~/.bash_completion/alacritty
-echo "source ~/.bash_completion/alacritty" >> ~/.bashrc
-```
-
-#### Fish
-
-To install the completions for fish, from inside the fish shell, run
-
-```
-mkdir -p $fish_complete_path[1]
-cp extra/completions/alacritty.fish $fish_complete_path[1]/alacritty.fish
-```
+Report defects at the
+[fork issue tracker](https://github.com/aoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoaoa/alacritty-1337/issues).

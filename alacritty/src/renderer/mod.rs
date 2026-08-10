@@ -117,7 +117,7 @@ impl Renderer {
     ) -> Result<Self, Error> {
         // We need to load OpenGL functions once per instance, but only after we make our context
         // current due to WGL limitations.
-        let _ = GL_FUNS_LOADED.get_or_init(|| {
+        let () = GL_FUNS_LOADED.get_or_init(|| {
             let gl_display = context.display();
             gl::load_with(|symbol| {
                 CString::new(symbol).map_or(ptr::null(), |symbol| {
@@ -240,7 +240,7 @@ impl Renderer {
     }
 
     /// Draw all rectangles simultaneously to prevent excessive program swaps.
-    pub fn draw_rects(&mut self, size_info: &SizeInfo, metrics: &Metrics, rects: Vec<RenderRect>) {
+    pub fn draw_rects(&mut self, size_info: &SizeInfo, metrics: &Metrics, rects: &[RenderRect]) {
         if rects.is_empty() {
             return;
         }

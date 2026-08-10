@@ -176,22 +176,22 @@ pub enum Action {
     /// Clear the display buffer(s) to remove history.
     ClearHistory,
 
-    /// Hide the Alacritty window.
+    /// Hide the alacritty-1337 window.
     Hide,
 
-    /// Hide all windows other than Alacritty on macOS.
+    /// Hide all windows other than alacritty-1337 on macOS.
     HideOtherApplications,
 
-    /// Minimize the Alacritty window.
+    /// Minimize the alacritty-1337 window.
     Minimize,
 
-    /// Quit Alacritty.
+    /// Quit alacritty-1337.
     Quit,
 
     /// Clear warning and error notices.
     ClearLogNotice,
 
-    /// Spawn a new instance of Alacritty.
+    /// Spawn a new instance of alacritty-1337.
     SpawnNewInstance,
 
     /// Select next tab.
@@ -230,7 +230,7 @@ pub enum Action {
     /// Select the last tab.
     SelectLastTab,
 
-    /// Create a new Alacritty window.
+    /// Create a new alacritty-1337 window.
     CreateNewWindow,
 
     /// Create new window in a tab.
@@ -659,9 +659,9 @@ pub enum KeyLocation {
 impl From<WinitKeyLocation> for KeyLocation {
     fn from(value: WinitKeyLocation) -> Self {
         match value {
-            WinitKeyLocation::Standard => KeyLocation::Standard,
-            WinitKeyLocation::Left => KeyLocation::Standard,
-            WinitKeyLocation::Right => KeyLocation::Standard,
+            WinitKeyLocation::Standard | WinitKeyLocation::Left | WinitKeyLocation::Right => {
+                KeyLocation::Standard
+            },
             WinitKeyLocation::Numpad => KeyLocation::Numpad,
         }
     }
@@ -740,8 +740,7 @@ impl<'a> Deserialize<'a> for BindingKey {
                     "Backslash" => (Key::Character("\\".into()), KeyLocation::Any),
 
                     // The keys which has alternative on numeric pad.
-                    "Enter" => (Key::Named(NamedKey::Enter), KeyLocation::Standard),
-                    "Return" => (Key::Named(NamedKey::Enter), KeyLocation::Standard),
+                    "Enter" | "Return" => (Key::Named(NamedKey::Enter), KeyLocation::Standard),
                     "Plus" => (Key::Character("+".into()), KeyLocation::Standard),
                     "Comma" => (Key::Character(",".into()), KeyLocation::Standard),
                     "Slash" => (Key::Character("/".into()), KeyLocation::Standard),
@@ -814,7 +813,7 @@ bitflags! {
 }
 
 impl BindingMode {
-    pub fn new(mode: &TermMode, search: bool) -> BindingMode {
+    pub fn new(mode: TermMode, search: bool) -> BindingMode {
         let mut binding_mode = BindingMode::empty();
         binding_mode.set(BindingMode::APP_CURSOR, mode.contains(TermMode::APP_CURSOR));
         binding_mode.set(BindingMode::APP_KEYPAD, mode.contains(TermMode::APP_KEYPAD));
@@ -1039,6 +1038,8 @@ impl<'a> Deserialize<'a> for RawBinding {
             where
                 V: MapAccess<'a>,
             {
+                use de::Error;
+
                 let mut mods: Option<ModifiersState> = None;
                 let mut key: Option<BindingKey> = None;
                 let mut chars: Option<String> = None;
@@ -1047,8 +1048,6 @@ impl<'a> Deserialize<'a> for RawBinding {
                 let mut not_mode: Option<BindingMode> = None;
                 let mut mouse: Option<MouseEvent> = None;
                 let mut command: Option<Program> = None;
-
-                use de::Error;
 
                 while let Some(struct_key) = map.next_key::<Field>()? {
                     match struct_key {
@@ -1117,9 +1116,8 @@ impl<'a> Deserialize<'a> for RawBinding {
                                 match Action::deserialize(value.clone()).map_err(V::Error::custom) {
                                     Ok(action) => Some(action),
                                     Err(err) => {
-                                        let value = match value {
-                                            SerdeValue::String(string) => string,
-                                            _ => return Err(err),
+                                        let SerdeValue::String(value) = value else {
+                                            return Err(err);
                                         };
                                         return Err(V::Error::custom(format!(
                                             "unknown keyboard action `{value}`"
@@ -1157,9 +1155,6 @@ impl<'a> Deserialize<'a> for RawBinding {
                 let mods = mods.unwrap_or_default();
 
                 let action = match (action, chars, command) {
-                    (Some(action @ Action::ViMotion(_)), None, None)
-                    | (Some(action @ Action::Vi(_)), None, None) => action,
-                    (Some(action @ Action::Search(_)), None, None) => action,
                     (Some(action @ Action::Mouse(_)), None, None) => {
                         if mouse.is_none() {
                             return Err(V::Error::custom(format!(
@@ -1168,7 +1163,14 @@ impl<'a> Deserialize<'a> for RawBinding {
                         }
                         action
                     },
-                    (Some(action), None, None) => action,
+                    (
+                        Some(
+                            action @ (Action::ViMotion(_) | Action::Vi(_) | Action::Search(_))
+                            | action,
+                        ),
+                        None,
+                        None,
+                    ) => action,
                     (None, Some(chars), None) => Action::Esc(chars),
                     (None, None, Some(cmd)) => Action::Command(cmd),
                     _ => {

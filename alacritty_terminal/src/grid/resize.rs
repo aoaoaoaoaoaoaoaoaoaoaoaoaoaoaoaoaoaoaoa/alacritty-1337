@@ -37,7 +37,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
 
     /// Add lines to the visible area.
     ///
-    /// Alacritty keeps the cursor at the bottom of the terminal as long as there
+    /// alacritty-1337 keeps the cursor at the bottom of the terminal as long as there
     /// is scrollback available. Once scrollback is exhausted, new lines are
     /// simply added to the bottom of the screen.
     fn grow_lines<D>(&mut self, target: usize)
@@ -74,7 +74,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
     /// bottom of the screen. This is achieved by pushing history "out the top"
     /// of the terminal window.
     ///
-    /// Alacritty takes the same approach.
+    /// alacritty-1337 takes the same approach.
     fn shrink_lines<D>(&mut self, target: usize)
     where
         T: ResetDiscriminant<D>,
@@ -317,10 +317,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                     cell.flags_mut().insert(Flags::WRAPLINE);
                 }
 
-                if wrapped
-                    .last()
-                    .map(|c| c.flags().contains(Flags::WRAPLINE) && i >= 1)
-                    .unwrap_or(false)
+                if wrapped.last().is_some_and(|c| c.flags().contains(Flags::WRAPLINE) && i >= 1)
                     && wrapped.len() < columns
                 {
                     // Make sure previous wrap flag doesn't linger around.

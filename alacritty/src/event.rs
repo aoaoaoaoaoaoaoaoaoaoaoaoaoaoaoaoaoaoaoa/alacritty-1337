@@ -271,10 +271,13 @@ impl ApplicationHandler<Event> for Processor {
 
     fn window_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
+        event_loop: &ActiveEventLoop,
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        #[cfg(not(target_os = "macos"))]
+        let _ = event_loop;
+
         if self.config.debug.print_events {
             info!(target: LOG_TARGET_WINIT, "{event:?}");
         }
@@ -284,16 +287,13 @@ impl ApplicationHandler<Event> for Processor {
             return;
         }
 
-        let window_context = match self.windows.get_mut(&window_id) {
-            Some(window_context) => window_context,
-            None => return,
-        };
+        let Some(window_context) = self.windows.get_mut(&window_id) else { return };
 
         let is_redraw = matches!(event, WindowEvent::RedrawRequested);
 
         window_context.handle_event(
             #[cfg(target_os = "macos")]
-            _event_loop,
+            event_loop,
             &self.proxy,
             &mut self.clipboard,
             &mut self.scheduler,
@@ -360,7 +360,7 @@ impl ApplicationHandler<Event> for Processor {
 
                 // Send JSON config to the socket.
                 if let Ok(mut stream) = stream.try_clone() {
-                    ipc::send_reply(&mut stream, SocketReply::GetConfig(config_json));
+                    ipc::send_reply(&mut stream, &SocketReply::GetConfig(config_json));
                 }
             },
             (EventType::ConfigReload(path), _) => {
@@ -541,7 +541,7 @@ impl ApplicationHandler<Event> for Processor {
     }
 }
 
-/// Alacritty events.
+/// alacritty-1337 events.
 #[derive(Debug, Clone)]
 pub struct Event {
     /// Limit event to a specific window.
@@ -563,7 +563,7 @@ impl From<Event> for WinitEvent<Event> {
     }
 }
 
-/// Alacritty events.
+/// alacritty-1337 events.
 #[derive(Debug, Clone)]
 pub enum EventType {
     Terminal(TerminalEvent),
@@ -770,9 +770,8 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContex
 
     // Copy text selection.
     fn copy_selection(&mut self, ty: ClipboardType) {
-        let text = match self.terminal.selection_to_string().filter(|s| !s.is_empty()) {
-            Some(text) => text,
-            None => return,
+        let Some(text) = self.terminal.selection_to_string().filter(|s| !s.is_empty()) else {
+            return;
         };
 
         if ty == ClipboardType::Selection && self.config.selection.save_to_clipboard {
@@ -793,10 +792,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContex
     }
 
     fn update_selection(&mut self, mut point: Point, side: Side) {
-        let mut selection = match self.terminal.selection.take() {
-            Some(selection) => selection,
-            None => return,
-        };
+        let Some(mut selection) = self.terminal.selection.take() else { return };
 
         // Treat motion over message bar like motion over the last line.
         point.line = min(point.line, self.terminal.bottommost_line());
@@ -885,13 +881,13 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContex
     fn spawn_new_instance(&mut self) {
         let mut env_args = env::args();
         let Some(alacritty) = env_args.next() else {
-            error!("Unable to determine Alacritty executable path");
+            error!("Unable to determine alacritty-1337 executable path");
             return;
         };
 
         let mut args: Vec<String> = Vec::new();
 
-        // Reuse the arguments passed to Alacritty for the new instance.
+        // Reuse the arguments passed to alacritty-1337 for the new instance.
         #[allow(
             clippy::while_let_on_iterator,
             reason = "the iterator is advanced manually inside the loop"
@@ -948,7 +944,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContex
         let result = spawn_daemon(program, args, self.launch_environment);
 
         match result {
-            Ok(_) => debug!("Launched {program} with args {args:?}"),
+            Ok(()) => debug!("Launched {program} with args {args:?}"),
             Err(err) => warn!("Unable to launch {program} with args {args:?}: {err}"),
         }
     }
@@ -1192,10 +1188,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContex
         // If we found a match, we set the search origin right in front of it to make sure that
         // after modifications to the regex the search is started without moving the focused match
         // around.
-        let focused_match = match &self.search_state.focused_match {
-            Some(focused_match) => focused_match,
-            None => return,
-        };
+        let Some(focused_match) = &self.search_state.focused_match else { return };
 
         // Set new origin to the left/right of the match, depending on search direction.
         let new_origin = match self.search_state.direction {
@@ -1278,10 +1271,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContex
         }
 
         let hint_bounds = hint.bounds();
-        let text = match hint.text(self.terminal) {
-            Some(text) => text,
-            None => return,
-        };
+        let Some(text) = hint.text(self.terminal) else { return };
 
         match &hint.action() {
             // Launch an external program.
@@ -1333,10 +1323,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContex
 
         let cell_side = self.mouse().cell_side;
 
-        let selection = match &mut self.terminal_mut().selection {
-            Some(selection) => selection,
-            None => return,
-        };
+        let Some(selection) = &mut self.terminal_mut().selection else { return };
 
         selection.ty = selection_type;
         self.update_selection(point, cell_side);
@@ -1505,10 +1492,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContex
     /// Process input during inline search.
     fn inline_search_input(&mut self, text: &str) {
         // Ignore input with empty text, like modifier keys.
-        let c = match text.chars().next() {
-            Some(c) => c,
-            None => return,
-        };
+        let Some(c) = text.chars().next() else { return };
 
         self.inline_search_state.char_pending = false;
         self.inline_search_state.character = Some(c);
@@ -1542,10 +1526,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext for ActionContex
 
 impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
     fn update_search(&mut self) {
-        let regex = match self.search_state.regex() {
-            Some(regex) => regex,
-            None => return,
-        };
+        let Some(regex) = self.search_state.regex() else { return };
 
         // Hide cursor while typing into the search bar.
         if self.config.mouse.hide_when_typing {
@@ -1593,10 +1574,7 @@ impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
 
     /// Jump to the first regex match from the search origin.
     fn goto_match(&mut self, mut limit: Option<usize>) {
-        let dfas = match &mut self.search_state.dfas {
-            Some(dfas) => dfas,
-            None => return,
-        };
+        let Some(dfas) = &mut self.search_state.dfas else { return };
 
         // Limit search only when enough lines are available to run into the limit.
         limit = limit.filter(|&limit| limit <= self.terminal.total_lines());
@@ -1713,10 +1691,7 @@ impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
 
     /// Perform vi mode inline search in the specified direction.
     fn inline_search(&mut self, direction: Direction) {
-        let c = match self.inline_search_state.character {
-            Some(c) => c,
-            None => return,
-        };
+        let Some(c) = self.inline_search_state.character else { return };
         let mut buf = [0; 4];
         let search_character = c.encode_utf8(&mut buf);
 
@@ -2006,7 +1981,7 @@ impl input::Processor<ActionContext<'_, Notifier, EventProxy>> {
                         self.ctx.display.pending_update.set_dimensions(size);
                     },
                     WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
-                        self.key_input(event);
+                        self.key_input(&event);
                     },
                     WindowEvent::ModifiersChanged(modifiers) => self.modifiers_input(modifiers),
                     WindowEvent::MouseInput { state, button, .. } => {
